@@ -279,15 +279,35 @@ function renderSchedule_(sched, schedule) {
   const timeline = Array.from({ length: maxFinish }, (_, index) => index + 1);
   ensureSheetSize_(sched, SCHED_HEADER_ROW + output.length, timeline.length + GANTT_FIRST_COLUMN - 1);
 
+  const headerColumnCount = timeline.length + GANTT_FIRST_COLUMN - 1;
+  const headerRange = sched.getRange(SCHED_HEADER_ROW, 1, 1, headerColumnCount);
   sched.getRange(SCHED_HEADER_ROW, 1, 1, 8).setValues([['Activity', 'Activity Description', 'Predecessor', 'Duration', 'Early Start', 'Early Finish', 'Late Start', 'Late Finish']]);
   sched.getRange(SCHED_FIRST_DATA_ROW, 1, output.length, 8).setValues(output);
+  sched.getRange(SCHED_FIRST_DATA_ROW, 1, output.length, 1).setHorizontalAlignment('center');
+  sched.getRange(SCHED_FIRST_DATA_ROW, 3, output.length, 6).setHorizontalAlignment('center');
+  sched.autoResizeColumn(2);
 
   sched.getRange(SCHED_HEADER_ROW, GANTT_FIRST_COLUMN, 1, timeline.length).setValues([timeline]);
+  headerRange
+    .setFontWeight('bold')
+    .setHorizontalAlignment('center')
+    .setVerticalAlignment('middle');
 
   const backgrounds = schedule.map(activity => timeline.map(day => {
     return day >= activity.earlyStart && day <= activity.earlyFinish ? '#4CAF50' : null;
   }));
-  sched.getRange(SCHED_FIRST_DATA_ROW, GANTT_FIRST_COLUMN, backgrounds.length, timeline.length).setBackgrounds(backgrounds);
+  const ganttValues = schedule.map(activity => timeline.map(day => {
+    const durationLabelDay = activity.earlyStart + Math.floor((activity.duration - 1) / 2);
+    return day === durationLabelDay ? activity.duration : '';
+  }));
+  const ganttFontWeights = ganttValues.map(row => row.map(value => value === '' ? 'normal' : 'bold'));
+  const ganttRange = sched.getRange(SCHED_FIRST_DATA_ROW, GANTT_FIRST_COLUMN, backgrounds.length, timeline.length);
+  ganttRange
+    .setValues(ganttValues)
+    .setBackgrounds(backgrounds)
+    .setFontWeights(ganttFontWeights)
+    .setHorizontalAlignment('center')
+    .setVerticalAlignment('middle');
   resizeGanttCells_(sched, schedule.length + 1, timeline.length);
 }
 
@@ -359,7 +379,7 @@ function ensureSheetSize_(sheet, requiredRows, requiredColumns) {
 function clearSchedule_(sched) {
   const rows = sched.getMaxRows();
   const cols = sched.getMaxColumns();
-  sched.getRange(1, 1, rows, cols).clearContent().setBackground(null);
+  sched.getRange(1, 1, rows, cols).clearContent().setBackground(null).setFontWeight('normal');
 }
 
 function normalizeId_(value) {
