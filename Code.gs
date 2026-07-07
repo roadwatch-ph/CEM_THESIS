@@ -313,6 +313,7 @@ function renderSchedule_(sched, schedule) {
     .setVerticalAlignment('middle');
   styleSchedule_(sched, output.length, timeline.length);
   resizeGanttCells_(sched, output.length, timeline.length);
+  trimExtraScheduleColumns_(sched, timeline.length + GANTT_FIRST_COLUMN - 1);
   sched.setFrozenRows(SCHED_TIMELINE_DAYS_ROW);
   sched.setFrozenColumns(GANTT_FIRST_COLUMN - 1);
 }
@@ -351,7 +352,8 @@ function renderTensHeaders_(sched, timeline) {
 }
 
 function styleSchedule_(sched, activityCount, timelineLength) {
-  const tableRange = sched.getRange(SCHED_HEADER_ROW, 1, activityCount + 1, 8);
+  const styledRowCount = activityCount + SCHED_FIRST_DATA_ROW - SCHED_HEADER_ROW;
+  const tableRange = sched.getRange(SCHED_HEADER_ROW, 1, styledRowCount, 8);
   const timelineRange = sched.getRange(SCHED_TIMELINE_LABEL_ROW, GANTT_FIRST_COLUMN, activityCount + SCHED_FIRST_DATA_ROW - 1, timelineLength);
 
   tableRange.setBorder(true, true, true, true, true, true, '#000000', SpreadsheetApp.BorderStyle.SOLID);
@@ -416,6 +418,14 @@ function resizeGanttCells_(sched, activityCount, timelineLength) {
   const totalRows = activityCount + SCHED_FIRST_DATA_ROW - 1;
   sched.setColumnWidths(GANTT_FIRST_COLUMN, timelineLength, GANTT_CELL_SIZE_PX);
   sched.setRowHeights(SCHED_TITLE_ROW, totalRows, GANTT_CELL_SIZE_PX);
+}
+
+function trimExtraScheduleColumns_(sheet, requiredColumns) {
+  const extraColumns = sheet.getMaxColumns() - requiredColumns;
+
+  if (extraColumns > 0) {
+    sheet.deleteColumns(requiredColumns + 1, extraColumns);
+  }
 }
 
 function ensureSheetSize_(sheet, requiredRows, requiredColumns) {
