@@ -32,6 +32,8 @@ const PERT_NODE_HEIGHT = 3;
 const PERT_NODE_WIDTH = 3;
 const PERT_ARROW_COLOR = '#000000';
 const PERT_ARROW_FONT_SIZE = 16;
+const PERT_ARROW_START_PADDING = 1;
+const PERT_ARROW_END_PADDING = 1;
 const DEFAULT_WBS_SHEET_NAME = 'WBS';
 const DEFAULT_SCHED_SHEET_NAME = 'Scheduling';
 const DEFAULT_PERT_SHEET_NAME = 'PERT Diagram';
@@ -505,20 +507,126 @@ function renderPertNode_(pert, row, col, activity) {
 
 
 function renderPertArrows_(pert, schedule, layout) {
+  const activityById = new Map(schedule.map(activity => [activity.id, activity]));
+  const incomingRouteIndexByTarget = new Map();
+
   schedule.forEach(activity => {
-    const sourcePosition = layout.positions.get(activity.id);
-    const sourceRow = getPertNodeRow_(sourcePosition);
-    const sourceCol = getPertNodeColumn_(sourcePosition);
-
-    activity.successors.forEach(successorId => {
-      const targetPosition = layout.positions.get(successorId);
-      if (!targetPosition) return;
-
-      const targetRow = getPertNodeRow_(targetPosition);
-      const targetCol = getPertNodeColumn_(targetPosition);
-      renderPertArrow_(pert, sourceRow, sourceCol, targetRow, targetCol);
+    activity.predecessors.forEach((predecessorId, predecessorIndex) => {
+      if (!incomingRouteIndexByTarget.has(activity.id)) {
+        incomingRouteIndexByTarget.set(activity.id, new Map());
+      }
+      incomingRouteIndexByTarget.get(activity.id).set(predecessorId, predecessorIndex);
     });
   });
+
+  schedule.forEach(activity => {
+    const sourcePosition = layout.positions.get(activity.id);
+    if (!sourcePosition) return;
+
+    activity.successors.forEach((successorId, successorIndex) => {
+      const successor = activityById.get(successorId);
+      const targetPosition = layout.positions.get(successorId);
+      if (!successor || !targetPosition) return;
+
+      const incomingIndex = incomingRouteIndexByTarget.get(successorId).get(activity.id) || 0;
+      const incomingCount = Math.max(1, successor.predecessors.length);
+      renderPertSmartArrow_(pert, sourcePosition, targetPosition, successorIndex, incomingIndex, incomingCount);
+    });
+  });
+}
+
+function renderPertSmartArrow_(pert, sourcePosition, targetPosition, successorIndex, incomingIndex, incomingCount) {
+  const sourceRow = getPertNodeRow_(sourcePosition);
+  const sourceCol = getPertNodeColumn_(sourcePosition);
+  const targetRow = getPertNodeRow_(targetPosition);
+  const targetCol = getPertNodeColumn_(targetPosition);
+  const startPoint = getPertArrowStartPoint_(sourceRow, sourceCol);
+  const endPoint = getPertArrowEndPoint_(targetRow, targetCol, incomingIndex, incomingCount);
+
+  if (endPoint.col < startPoint.col) return;
+
+  const horizontalClearance = endPoint.col - startPoint.col;
+  const verticalDelta = endPoint.row - startPoint.row;
+
+  if (verticalDelta === 0) {
+    renderPertHorizontalArrowLine_(pert, startPoint.row, startPoint.col, endPoint.col);
+    renderPertArrowHead_(pert, endPoint.row, endPoint.col, '➜');
+    return;
+  }
+
+  const canDrawCleanDiagonal = Math.abs(verticalDelta) <= horizontalClearance && horizontalClearance <= PERT_NODE_COLUMN_SPACING;
+  if (canDrawCleanDiagonal) {
+    renderPertDiagonalArrow_(pert, startPoint, endPoint);
+    return;
+  }
+
+  renderPertOrthogonalSmartArrow_(pert, startPoint, endPoint, successorIndex, incomingIndex);
+}
+
+function getPertArrowStartPoint_(sourceRow, sourceCol) {
+  return {
+    row: sourceRow + Math.floor(PERT_NODE_HEIGHT / 2),
+    col: sourceCol + PERT_NODE_WIDTH,
+  };
+}
+
+function getPertArrowEndPoint_(targetRow, targetCol, incomingIndex, incomingCount) {
+  return {
+    row: getPertIncomingArrowRow_(targetRow, incomingIndex, incomingCount),
+    col: targetCol - 1,
+  };
+}
+
+function getPertIncomingArrowRow_(targetRow, incomingIndex, incomingCount) {
+  if (incomingCount <= 1) return targetRow + Math.floor(PERT_NODE_HEIGHT / 2);
+
+  const availableOffsets = Array.from({ length: PERT_NODE_HEIGHT }, (_, index) => index);
+  if (incomingCount <= PERT_NODE_HEIGHT) {
+    const step = (PERT_NODE_HEIGHT - 1) / (incomingCount - 1);
+    return targetRow + Math.round(incomingIndex * step);
+  }
+
+  return targetRow + availableOffsets[incomingIndex % availableOffsets.length];
+}
+
+function renderPertOrthogonalSmartArrow_(pert, startPoint, endPoint, successorIndex, incomingIndex) {
+  const startSpacerCol = startPoint.col + PERT_ARROW_START_PADDING;
+  const endSpacerCol = endPoint.col - PERT_ARROW_END_PADDING;
+  const routeWidth = Math.max(1, endSpacerCol - startSpacerCol + 1);
+  const bendCol = Math.min(endSpacerCol, startSpacerCol + ((successorIndex + incomingIndex) % routeWidth));
+
+  renderPertHorizontalConnector_(pert, startPoint.row, startPoint.col, bendCol);
+  renderPertVerticalConnector_(pert, bendCol, startPoint.row, endPoint.row);
+  renderPertHorizontalArrowLine_(pert, endPoint.row, bendCol, endPoint.col);
+  renderPertArrowHead_(pert, endPoint.row, endPoint.col, '➜');
+}
+
+function renderPertDiagonalArrow_(pert, startPoint, endPoint) {
+  const step = endPoint.row > startPoint.row ? 1 : -1;
+  const glyph = step > 0 ? '╲' : '╱';
+  const arrowGlyph = step > 0 ? '↘' : '↗';
+  const diagonalSteps = Math.abs(endPoint.row - startPoint.row);
+  if (diagonalSteps === 0) {
+    renderPertHorizontalArrowLine_(pert, startPoint.row, startPoint.col, endPoint.col);
+    renderPertArrowHead_(pert, endPoint.row, endPoint.col, '➜');
+    return;
+  }
+
+  for (let stepIndex = 0; stepIndex < diagonalSteps; stepIndex++) {
+    const row = startPoint.row + stepIndex * step;
+    const col = startPoint.col + stepIndex;
+    renderPertDiagonalConnector_(pert, row, col, glyph);
+  }
+
+  const arrowCol = Math.min(endPoint.col, startPoint.col + diagonalSteps);
+
+  if (arrowCol < endPoint.col) {
+    renderPertDiagonalConnector_(pert, endPoint.row, arrowCol, glyph);
+    renderPertHorizontalArrowLine_(pert, endPoint.row, arrowCol, endPoint.col);
+    renderPertArrowHead_(pert, endPoint.row, endPoint.col, '➜');
+  } else {
+    renderPertArrowHead_(pert, endPoint.row, arrowCol, arrowGlyph);
+  }
 }
 
 function getPertNodeRow_(position) {
@@ -527,27 +635,6 @@ function getPertNodeRow_(position) {
 
 function getPertNodeColumn_(position) {
   return 1 + position.level * PERT_NODE_COLUMN_SPACING;
-}
-
-function renderPertArrow_(pert, sourceRow, sourceCol, targetRow, targetCol) {
-  const sourceMiddleRow = sourceRow + Math.floor(PERT_NODE_HEIGHT / 2);
-  const targetMiddleRow = targetRow + Math.floor(PERT_NODE_HEIGHT / 2);
-  const startCol = sourceCol + PERT_NODE_WIDTH;
-  const arrowHeadCol = targetCol - 1;
-
-  if (arrowHeadCol < startCol) return;
-
-  if (sourceMiddleRow === targetMiddleRow) {
-    renderPertHorizontalArrowLine_(pert, sourceMiddleRow, startCol, arrowHeadCol);
-    renderPertArrowHead_(pert, targetMiddleRow, arrowHeadCol, '➜');
-    return;
-  }
-
-  const bendCol = Math.max(startCol, Math.min(arrowHeadCol, startCol + Math.floor((arrowHeadCol - startCol) / 2)));
-  renderPertHorizontalConnector_(pert, sourceMiddleRow, startCol, bendCol);
-  renderPertVerticalConnector_(pert, bendCol, sourceMiddleRow, targetMiddleRow);
-  renderPertHorizontalArrowLine_(pert, targetMiddleRow, bendCol, arrowHeadCol);
-  renderPertArrowHead_(pert, targetMiddleRow, arrowHeadCol, '➜');
 }
 
 function renderPertHorizontalArrowLine_(pert, row, startCol, arrowHeadCol) {
@@ -574,6 +661,19 @@ function renderPertVerticalConnector_(pert, col, startRow, endRow) {
   connectorRange
     .clearContent()
     .setBorder(null, true, null, null, false, false, PERT_ARROW_COLOR, SpreadsheetApp.BorderStyle.SOLID_MEDIUM);
+}
+
+function renderPertDiagonalConnector_(pert, row, col, glyph) {
+  const connectorRange = pert.getRange(row, col);
+  breakApartOverlappingMergedRanges_(connectorRange);
+  connectorRange
+    .clearContent()
+    .setValue(glyph)
+    .setVerticalAlignment('middle')
+    .setHorizontalAlignment('center')
+    .setFontColor(PERT_ARROW_COLOR)
+    .setFontSize(PERT_ARROW_FONT_SIZE)
+    .setFontWeight('normal');
 }
 
 function renderPertArrowHead_(pert, row, col, glyph) {
