@@ -361,6 +361,7 @@ function renderSchedule_(sched, schedule) {
   const maxFinish = Math.max(...schedule.map(activity => activity.lateFinish));
   const timeline = Array.from({ length: maxFinish }, (_, index) => index + 1);
   ensureSheetSize_(sched, SCHED_FIRST_DATA_ROW + output.length - 1, timeline.length + GANTT_FIRST_COLUMN - 1);
+  trimExtraScheduleColumns_(sched, timeline.length + GANTT_FIRST_COLUMN - 1);
 
   const tableHeaderRange = sched.getRange(SCHED_HEADER_ROW, 1, 1, 8);
   tableHeaderRange.setValues([['Activity', 'Activity Description', 'Predecessor', 'Duration', 'Early Start', 'Early Finish', 'Late Start', 'Late Finish']]);
@@ -392,12 +393,12 @@ function renderSchedule_(sched, schedule) {
     .setVerticalAlignment('middle');
   styleSchedule_(sched, output.length, timeline.length);
   resizeGanttCells_(sched, output.length, timeline.length);
-  trimExtraScheduleColumns_(sched, timeline.length + GANTT_FIRST_COLUMN - 1);
   sched.setFrozenRows(SCHED_TIMELINE_DAYS_ROW);
   sched.setFrozenColumns(GANTT_FIRST_COLUMN - 1);
 }
 
 function renderPertDiagram_(pert, schedule) {
+  pert.setFrozenRows(0);
   clearPertDiagram_(pert);
 
   if (schedule.length === 0) return;
@@ -406,6 +407,7 @@ function renderPertDiagram_(pert, schedule) {
   const rowsNeeded = Math.max(8, 4 + layout.maxLane * 5 + 4);
   const columnsNeeded = Math.max(10, 1 + (layout.maxLevel + 1) * 6);
   ensureSheetSize_(pert, rowsNeeded, columnsNeeded);
+  trimExtraScheduleColumns_(pert, columnsNeeded);
 
   pert.getRange(1, 1, 1, columnsNeeded)
     .mergeAcross()
@@ -444,8 +446,6 @@ function renderPertDiagram_(pert, schedule) {
 
   renderPertLegend_(pert, rowsNeeded, columnsNeeded);
   resizePertCells_(pert, rowsNeeded, columnsNeeded);
-  trimExtraScheduleColumns_(pert, columnsNeeded);
-  pert.setFrozenRows(2);
 }
 
 function buildPertLayout_(schedule) {
@@ -633,11 +633,18 @@ function clearSchedule_(sched) {
   clearSheet_(sched);
 }
 
+
+function breakApartMergedRanges_(sheet) {
+  const rows = sheet.getMaxRows();
+  const cols = sheet.getMaxColumns();
+  sheet.getRange(1, 1, rows, cols).getMergedRanges().forEach(range => range.breakApart());
+}
+
 function clearSheet_(sheet) {
   const rows = sheet.getMaxRows();
   const cols = sheet.getMaxColumns();
+  breakApartMergedRanges_(sheet);
   sheet.getRange(1, 1, rows, cols)
-    .breakApart()
     .clearContent()
     .setBackground(null)
     .setFontWeight('normal')
