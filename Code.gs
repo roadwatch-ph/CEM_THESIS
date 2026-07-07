@@ -19,32 +19,66 @@ const SCHED_HEADER_ROW = 1;
 const SCHED_FIRST_DATA_ROW = SCHED_HEADER_ROW + 1;
 const GANTT_FIRST_COLUMN = 9;
 const GANTT_CELL_SIZE_PX = 20;
-const WBS_SHEET_NAME = 'WBS';
-const SCHED_SHEET_NAME = 'Scheduling';
+const DEFAULT_WBS_SHEET_NAME = 'WBS';
+const DEFAULT_SCHED_SHEET_NAME = 'Scheduling';
+const WBS_SHEET_NAME_PATTERN = /(^|\b)WBS($|\b)/i;
+const WBS_SHEET_NAME_REPLACEMENT_PATTERN = /WBS/ig;
 
 function generateSchedule() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const wbs = ss.getSheetByName(WBS_SHEET_NAME);
-  const sched = ss.getSheetByName(SCHED_SHEET_NAME);
+  const wbsSheets = getWbsSheets_(ss);
 
-  if (!wbs) throw new Error(`Missing sheet: ${WBS_SHEET_NAME}`);
-  if (!sched) throw new Error(`Missing sheet: ${SCHED_SHEET_NAME}`);
+  if (wbsSheets.length === 0) {
+    throw new Error(`Missing WBS sheet. Create a sheet with "WBS" in the tab name.`);
+  }
 
+  wbsSheets.forEach(wbs => generateScheduleForWbsSheet_(ss, wbs));
+}
+
+function generateScheduleForWbsSheet_(ss, wbs) {
+  const sched = getOrCreateSchedulingSheet_(ss, wbs);
   const lastRow = wbs.getLastRow();
+
   if (lastRow < 2) {
     clearSchedule_(sched);
     return;
   }
 
   const rows = wbs.getRange(2, 1, lastRow - 1, 4).getValues();
-  const activities = parseAndValidateWbs_(rows);
+  const activities = parseAndValidateWbs_(rows, wbs.getName());
   const orderedActivities = topologicalSort_(activities);
   const schedule = computeSchedule_(orderedActivities);
 
   renderSchedule_(sched, schedule);
 }
 
-function parseAndValidateWbs_(rows) {
+function getWbsSheets_(ss) {
+  return ss.getSheets().filter(sheet => isWbsSheetName_(sheet.getName()));
+}
+
+function isWbsSheetName_(sheetName) {
+  WBS_SHEET_NAME_PATTERN.lastIndex = 0;
+  return WBS_SHEET_NAME_PATTERN.test(sheetName) && !isSchedulingSheetName_(sheetName);
+}
+
+function isSchedulingSheetName_(sheetName) {
+  return /Scheduling/i.test(sheetName);
+}
+
+function getOrCreateSchedulingSheet_(ss, wbs) {
+  const schedulingSheetName = getSchedulingSheetName_(wbs.getName());
+  return ss.getSheetByName(schedulingSheetName) || ss.insertSheet(schedulingSheetName, wbs.getIndex());
+}
+
+function getSchedulingSheetName_(wbsSheetName) {
+  if (wbsSheetName === DEFAULT_WBS_SHEET_NAME) return DEFAULT_SCHED_SHEET_NAME;
+
+  WBS_SHEET_NAME_REPLACEMENT_PATTERN.lastIndex = 0;
+  const schedulingSheetName = wbsSheetName.replace(WBS_SHEET_NAME_REPLACEMENT_PATTERN, 'Scheduling').trim();
+  return schedulingSheetName || DEFAULT_SCHED_SHEET_NAME;
+}
+
+function parseAndValidateWbs_(rows, wbsSheetName) {
   const activities = [];
   const idSet = new Set();
   const errors = [];
@@ -56,11 +90,11 @@ function parseAndValidateWbs_(rows) {
     const predecessors = parsePredecessors_(row[2]);
     const duration = Number(row[3]);
 
-    if (!id) errors.push(`Row ${sheetRow}: missing Activity.`);
-    if (id && idSet.has(id)) errors.push(`Row ${sheetRow}: duplicate Activity "${id}".`);
-    if (!name) errors.push(`Row ${sheetRow}: missing Activity Description.`);
+    if (!id) errors.push(`${wbsSheetName} row ${sheetRow}: missing Activity.`);
+    if (id && idSet.has(id)) errors.push(`${wbsSheetName} row ${sheetRow}: duplicate Activity "${id}".`);
+    if (!name) errors.push(`${wbsSheetName} row ${sheetRow}: missing Activity Description.`);
     if (!Number.isFinite(duration) || duration <= 0) {
-      errors.push(`Row ${sheetRow}: Duration must be a positive number.`);
+      errors.push(`${wbsSheetName} row ${sheetRow}: Duration must be a positive number.`);
     }
 
     if (id) idSet.add(id);
@@ -70,10 +104,10 @@ function parseAndValidateWbs_(rows) {
   activities.forEach(activity => {
     activity.predecessors.forEach(predecessor => {
       if (!idSet.has(predecessor)) {
-        errors.push(`Row ${activity.sourceRow}: invalid predecessor "${predecessor}" for Activity "${activity.id}".`);
+        errors.push(`${wbsSheetName} row ${activity.sourceRow}: invalid predecessor "${predecessor}" for Activity "${activity.id}".`);
       }
       if (predecessor === activity.id) {
-        errors.push(`Row ${activity.sourceRow}: activity cannot be its own predecessor.`);
+        errors.push(`${wbsSheetName} row ${activity.sourceRow}: activity cannot be its own predecessor.`);
       }
     });
   });
@@ -202,15 +236,15 @@ function onEdit(e) {
   if (!e || !e.range) return;
 
   const editedSheet = e.range.getSheet();
-  if (editedSheet.getName() !== WBS_SHEET_NAME) return;
+  if (!isWbsSheetName_(editedSheet.getName())) return;
 
-  generateSchedule();
+  generateScheduleForWbsSheet_(e.source || SpreadsheetApp.getActiveSpreadsheet(), editedSheet);
 }
 
 /**
  * Optional one-time setup for an installable change trigger.
- * Run this once if you also want schedule regeneration after structural
- * spreadsheet changes such as inserting/removing rows or columns.
+ * Run this once if you also want schedule tabs to be created/regenerated after
+ * structural spreadsheet changes such as adding/removing WBS tabs, rows, or columns.
  */
 function installAutoScheduleTrigger() {
   const ss = SpreadsheetApp.getActive();
