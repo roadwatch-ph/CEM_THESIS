@@ -2,8 +2,8 @@
  * Generate a validated construction schedule and Gantt chart from the WBS sheet.
  *
  * Expected WBS columns:
- *   A: Activity No.
- *   B: Activity / Activities
+ *   A: Activity
+ *   B: Activity Description
  *   C: Predecessor (dash/blank for none, comma-separated IDs for multiple)
  *   D: Duration
  *
@@ -56,9 +56,9 @@ function parseAndValidateWbs_(rows) {
     const predecessors = parsePredecessors_(row[2]);
     const duration = Number(row[3]);
 
-    if (!id) errors.push(`Row ${sheetRow}: missing Activity No.`);
-    if (id && idSet.has(id)) errors.push(`Row ${sheetRow}: duplicate Activity No. "${id}".`);
-    if (!name) errors.push(`Row ${sheetRow}: missing Activity name.`);
+    if (!id) errors.push(`Row ${sheetRow}: missing Activity.`);
+    if (id && idSet.has(id)) errors.push(`Row ${sheetRow}: duplicate Activity "${id}".`);
+    if (!name) errors.push(`Row ${sheetRow}: missing Activity Description.`);
     if (!Number.isFinite(duration) || duration <= 0) {
       errors.push(`Row ${sheetRow}: Duration must be a positive number.`);
     }
@@ -70,7 +70,7 @@ function parseAndValidateWbs_(rows) {
   activities.forEach(activity => {
     activity.predecessors.forEach(predecessor => {
       if (!idSet.has(predecessor)) {
-        errors.push(`Row ${activity.sourceRow}: invalid predecessor "${predecessor}" for Activity No. "${activity.id}".`);
+        errors.push(`Row ${activity.sourceRow}: invalid predecessor "${predecessor}" for Activity "${activity.id}".`);
       }
       if (predecessor === activity.id) {
         errors.push(`Row ${activity.sourceRow}: activity cannot be its own predecessor.`);
@@ -180,7 +180,7 @@ function renderSchedule_(sched, schedule) {
   const timeline = Array.from({ length: maxFinish }, (_, index) => index + 1);
   ensureSheetSize_(sched, SCHED_HEADER_ROW + output.length, timeline.length + GANTT_FIRST_COLUMN - 1);
 
-  sched.getRange(SCHED_HEADER_ROW, 1, 1, 8).setValues([['Activity No.', 'Activity', 'Predecessor', 'Duration', 'Early Start', 'Early Finish', 'Late Start', 'Late Finish']]);
+  sched.getRange(SCHED_HEADER_ROW, 1, 1, 8).setValues([['Activity', 'Activity Description', 'Predecessor', 'Duration', 'Early Start', 'Early Finish', 'Late Start', 'Late Finish']]);
   sched.getRange(SCHED_FIRST_DATA_ROW, 1, output.length, 8).setValues(output);
 
   sched.getRange(SCHED_HEADER_ROW, GANTT_FIRST_COLUMN, 1, timeline.length).setValues([timeline]);
@@ -261,7 +261,7 @@ function parsePredecessors_(value) {
   const predecessors = [];
   text.split(',').forEach(part => {
     const token = normalizeId_(part);
-    const rangeMatch = token.match(/^(\d+)\s*-\s*(\d+)$/);
+    const rangeMatch = token.match(/^([A-Za-z]+|\d+)\s*-\s*([A-Za-z]+|\d+)$/);
 
     if (rangeMatch) {
       expandPredecessorRange_(rangeMatch[1], rangeMatch[2]).forEach(id => predecessors.push(id));
@@ -274,6 +274,21 @@ function parsePredecessors_(value) {
 }
 
 function expandPredecessorRange_(startId, endId) {
+  const startToken = normalizeId_(startId);
+  const endToken = normalizeId_(endId);
+
+  if (/^\d+$/.test(startToken) && /^\d+$/.test(endToken)) {
+    return expandNumericRange_(startToken, endToken);
+  }
+
+  if (/^[A-Za-z]+$/.test(startToken) && /^[A-Za-z]+$/.test(endToken)) {
+    return expandAlphabeticRange_(startToken, endToken);
+  }
+
+  return [`${startToken}-${endToken}`];
+}
+
+function expandNumericRange_(startId, endId) {
   const start = Number(startId);
   const end = Number(endId);
   if (!Number.isInteger(start) || !Number.isInteger(end) || start > end) {
@@ -287,4 +302,37 @@ function expandPredecessorRange_(startId, endId) {
   }
 
   return expanded;
+}
+
+function expandAlphabeticRange_(startId, endId) {
+  const start = alphabeticIdToNumber_(startId);
+  const end = alphabeticIdToNumber_(endId);
+  if (start > end) return [`${startId}-${endId}`];
+
+  const expanded = [];
+
+  for (let id = start; id <= end; id++) {
+    expanded.push(numberToAlphabeticId_(id, startId));
+  }
+
+  return expanded;
+}
+
+function alphabeticIdToNumber_(id) {
+  return id.toUpperCase().split('').reduce((total, letter) => {
+    return total * 26 + letter.charCodeAt(0) - 64;
+  }, 0);
+}
+
+function numberToAlphabeticId_(number, formatSource) {
+  let value = number;
+  let id = '';
+
+  while (value > 0) {
+    value--;
+    id = String.fromCharCode(65 + (value % 26)) + id;
+    value = Math.floor(value / 26);
+  }
+
+  return formatSource === formatSource.toLowerCase() ? id.toLowerCase() : id;
 }
