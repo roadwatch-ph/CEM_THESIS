@@ -15,8 +15,12 @@
  *   H: Late Finish
  *   I onward: Gantt timeline
  */
-const SCHED_HEADER_ROW = 1;
-const SCHED_FIRST_DATA_ROW = SCHED_HEADER_ROW + 1;
+const SCHED_TITLE_ROW = 1;
+const SCHED_HEADER_ROW = 2;
+const SCHED_TIMELINE_LABEL_ROW = 1;
+const SCHED_TIMELINE_TENS_ROW = 2;
+const SCHED_TIMELINE_DAYS_ROW = 3;
+const SCHED_FIRST_DATA_ROW = 4;
 const GANTT_FIRST_COLUMN = 9;
 const GANTT_CELL_SIZE_PX = 20;
 const DEFAULT_WBS_SHEET_NAME = 'WBS';
@@ -277,18 +281,17 @@ function renderSchedule_(sched, schedule) {
 
   const maxFinish = Math.max(...schedule.map(activity => activity.lateFinish));
   const timeline = Array.from({ length: maxFinish }, (_, index) => index + 1);
-  ensureSheetSize_(sched, SCHED_HEADER_ROW + output.length, timeline.length + GANTT_FIRST_COLUMN - 1);
+  ensureSheetSize_(sched, SCHED_FIRST_DATA_ROW + output.length - 1, timeline.length + GANTT_FIRST_COLUMN - 1);
 
-  const headerColumnCount = timeline.length + GANTT_FIRST_COLUMN - 1;
-  const headerRange = sched.getRange(SCHED_HEADER_ROW, 1, 1, headerColumnCount);
-  sched.getRange(SCHED_HEADER_ROW, 1, 1, 8).setValues([['Activity', 'Activity Description', 'Predecessor', 'Duration', 'Early Start', 'Early Finish', 'Late Start', 'Late Finish']]);
+  const tableHeaderRange = sched.getRange(SCHED_HEADER_ROW, 1, 1, 8);
+  tableHeaderRange.setValues([['Activity', 'Activity Description', 'Predecessor', 'Duration', 'Early Start', 'Early Finish', 'Late Start', 'Late Finish']]);
   sched.getRange(SCHED_FIRST_DATA_ROW, 1, output.length, 8).setValues(output);
   sched.getRange(SCHED_FIRST_DATA_ROW, 1, output.length, 1).setHorizontalAlignment('center');
   sched.getRange(SCHED_FIRST_DATA_ROW, 3, output.length, 6).setHorizontalAlignment('center');
   sched.autoResizeColumn(2);
 
-  sched.getRange(SCHED_HEADER_ROW, GANTT_FIRST_COLUMN, 1, timeline.length).setValues([timeline]);
-  headerRange
+  renderTimelineHeaders_(sched, timeline);
+  tableHeaderRange
     .setFontWeight('bold')
     .setHorizontalAlignment('center')
     .setVerticalAlignment('middle');
@@ -308,7 +311,34 @@ function renderSchedule_(sched, schedule) {
     .setFontWeights(ganttFontWeights)
     .setHorizontalAlignment('center')
     .setVerticalAlignment('middle');
-  resizeGanttCells_(sched, schedule.length + 1, timeline.length);
+  styleSchedule_(sched, output.length, timeline.length);
+  resizeGanttCells_(sched, output.length, timeline.length);
+  sched.setFrozenRows(SCHED_TIMELINE_DAYS_ROW);
+  sched.setFrozenColumns(GANTT_FIRST_COLUMN - 1);
+}
+
+function renderTimelineHeaders_(sched, timeline) {
+  const timelineLabelRange = sched.getRange(SCHED_TIMELINE_LABEL_ROW, GANTT_FIRST_COLUMN, 1, timeline.length);
+  timelineLabelRange.mergeAcross().setValue('NUMBER OF DAYS');
+
+  const tensLabels = timeline.map(day => day % 10 === 0 ? day : '');
+  sched.getRange(SCHED_TIMELINE_TENS_ROW, GANTT_FIRST_COLUMN, 1, timeline.length).setValues([tensLabels]);
+  sched.getRange(SCHED_TIMELINE_DAYS_ROW, GANTT_FIRST_COLUMN, 1, timeline.length).setValues([timeline]);
+
+  sched.getRange(SCHED_TIMELINE_LABEL_ROW, GANTT_FIRST_COLUMN, SCHED_TIMELINE_DAYS_ROW, timeline.length)
+    .setFontWeight('bold')
+    .setHorizontalAlignment('center')
+    .setVerticalAlignment('middle');
+}
+
+function styleSchedule_(sched, activityCount, timelineLength) {
+  const tableRange = sched.getRange(SCHED_HEADER_ROW, 1, activityCount + 1, 8);
+  const timelineRange = sched.getRange(SCHED_TIMELINE_LABEL_ROW, GANTT_FIRST_COLUMN, activityCount + SCHED_FIRST_DATA_ROW - 1, timelineLength);
+
+  tableRange.setBorder(true, true, true, true, true, true, '#000000', SpreadsheetApp.BorderStyle.SOLID);
+  timelineRange.setBorder(true, true, true, true, true, true, '#000000', SpreadsheetApp.BorderStyle.SOLID);
+  sched.getRange(SCHED_HEADER_ROW, 1, 1, 8).setBackground('#ffffff');
+  sched.getRange(SCHED_FIRST_DATA_ROW, 1, activityCount, 8).setBackground('#ffffff');
 }
 
 
@@ -359,11 +389,12 @@ function installAutoScheduleTrigger() {
     .create();
 }
 
-function resizeGanttCells_(sched, rowCount, columnCount) {
-  if (rowCount <= 0 || columnCount <= 0) return;
+function resizeGanttCells_(sched, activityCount, timelineLength) {
+  if (activityCount <= 0 || timelineLength <= 0) return;
 
-  sched.setColumnWidths(GANTT_FIRST_COLUMN, columnCount, GANTT_CELL_SIZE_PX);
-  sched.setRowHeights(SCHED_HEADER_ROW, rowCount, GANTT_CELL_SIZE_PX);
+  const totalRows = activityCount + SCHED_FIRST_DATA_ROW - 1;
+  sched.setColumnWidths(GANTT_FIRST_COLUMN, timelineLength, GANTT_CELL_SIZE_PX);
+  sched.setRowHeights(SCHED_TITLE_ROW, totalRows, GANTT_CELL_SIZE_PX);
 }
 
 function ensureSheetSize_(sheet, requiredRows, requiredColumns) {
@@ -379,7 +410,12 @@ function ensureSheetSize_(sheet, requiredRows, requiredColumns) {
 function clearSchedule_(sched) {
   const rows = sched.getMaxRows();
   const cols = sched.getMaxColumns();
-  sched.getRange(1, 1, rows, cols).clearContent().setBackground(null).setFontWeight('normal');
+  sched.getRange(1, 1, rows, cols)
+    .breakApart()
+    .clearContent()
+    .setBackground(null)
+    .setFontWeight('normal')
+    .setBorder(false, false, false, false, false, false);
 }
 
 function normalizeId_(value) {
