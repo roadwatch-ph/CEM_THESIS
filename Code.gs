@@ -14,6 +14,9 @@
  *   G: Late Start
  *   H: Late Finish
  *   I onward: Gantt timeline
+ *
+ * PERT output:
+ *   One activity-on-node diagram tab per WBS, grouped left-to-right by dependency level.
  */
 const SCHED_TITLE_ROW = 1;
 const SCHED_HEADER_ROW = 2;
@@ -25,9 +28,11 @@ const GANTT_FIRST_COLUMN = 9;
 const GANTT_CELL_SIZE_PX = 20;
 const DEFAULT_WBS_SHEET_NAME = 'WBS';
 const DEFAULT_SCHED_SHEET_NAME = 'Scheduling';
+const DEFAULT_PERT_SHEET_NAME = 'PERT Diagram';
 const WBS_SHEET_NAME_PATTERN = /(^|\b)WBS($|\b)/i;
 const WBS_SHEET_NAME_REPLACEMENT_PATTERN = /WBS/ig;
 const SCHEDULING_SHEET_ID_PROPERTY_PREFIX = 'schedulingSheetIdForWbs_';
+const PERT_SHEET_ID_PROPERTY_PREFIX = 'pertSheetIdForWbs_';
 const MAX_SHEET_NAME_LENGTH = 100;
 
 function generateSchedule() {
@@ -53,10 +58,12 @@ function generateScheduleForSpreadsheet_(ss) {
 
 function generateScheduleForWbsSheet_(ss, wbs) {
   const sched = getOrCreateSchedulingSheet_(ss, wbs);
+  const pert = getOrCreatePertSheet_(ss, wbs);
   const lastRow = wbs.getLastRow();
 
   if (lastRow < 2) {
     clearSchedule_(sched);
+    clearPertDiagram_(pert);
     return;
   }
 
@@ -66,6 +73,7 @@ function generateScheduleForWbsSheet_(ss, wbs) {
   const schedule = computeSchedule_(orderedActivities);
 
   renderSchedule_(sched, schedule);
+  renderPertDiagram_(pert, schedule);
 }
 
 function getWbsSheets_(ss) {
@@ -74,11 +82,15 @@ function getWbsSheets_(ss) {
 
 function isWbsSheetName_(sheetName) {
   WBS_SHEET_NAME_PATTERN.lastIndex = 0;
-  return WBS_SHEET_NAME_PATTERN.test(sheetName) && !isSchedulingSheetName_(sheetName);
+  return WBS_SHEET_NAME_PATTERN.test(sheetName) && !isSchedulingSheetName_(sheetName) && !isPertSheetName_(sheetName);
 }
 
 function isSchedulingSheetName_(sheetName) {
   return /Scheduling/i.test(sheetName);
+}
+
+function isPertSheetName_(sheetName) {
+  return /PERT/i.test(sheetName);
 }
 
 function getOrCreateSchedulingSheet_(ss, wbs) {
@@ -90,6 +102,68 @@ function getOrCreateSchedulingSheet_(ss, wbs) {
   const sched = existingSheet || ss.insertSheet(schedulingSheetName, wbs.getIndex());
   saveSchedulingSheetMapping_(wbs, sched);
   return sched;
+}
+
+function getOrCreatePertSheet_(ss, wbs) {
+  const existingMappedSheet = getMappedPertSheet_(ss, wbs);
+  if (existingMappedSheet) return existingMappedSheet;
+
+  const pertSheetName = getAvailablePertSheetName_(ss, wbs);
+  const existingSheet = ss.getSheetByName(pertSheetName);
+  const pert = existingSheet || ss.insertSheet(pertSheetName, wbs.getIndex() + 1);
+  savePertSheetMapping_(wbs, pert);
+  return pert;
+}
+
+function getMappedPertSheet_(ss, wbs) {
+  const sheetId = PropertiesService.getDocumentProperties().getProperty(getPertSheetPropertyKey_(wbs));
+  if (!sheetId) return null;
+
+  const pert = ss.getSheetById(Number(sheetId));
+  return pert && !isWbsSheetName_(pert.getName()) ? pert : null;
+}
+
+function savePertSheetMapping_(wbs, pert) {
+  PropertiesService.getDocumentProperties().setProperty(getPertSheetPropertyKey_(wbs), String(pert.getSheetId()));
+}
+
+function getPertSheetPropertyKey_(wbs) {
+  return `${PERT_SHEET_ID_PROPERTY_PREFIX}${wbs.getSheetId()}`;
+}
+
+function getAvailablePertSheetName_(ss, wbs) {
+  const baseName = getPertSheetName_(wbs.getName());
+  const baseSheet = ss.getSheetByName(baseName);
+  if (!baseSheet || !isPertSheetMappedToOtherWbs_(baseSheet, wbs)) return baseName;
+
+  for (let counter = 2; counter < 1000; counter++) {
+    const suffix = ` ${counter}`;
+    const candidate = `${baseName.slice(0, MAX_SHEET_NAME_LENGTH - suffix.length)}${suffix}`;
+    const candidateSheet = ss.getSheetByName(candidate);
+    if (!candidateSheet || !isPertSheetMappedToOtherWbs_(candidateSheet, wbs)) return candidate;
+  }
+
+  throw new Error(`Could not create a unique PERT Diagram tab for ${wbs.getName()}.`);
+}
+
+function isPertSheetMappedToOtherWbs_(pert, wbs) {
+  const currentPropertyKey = getPertSheetPropertyKey_(wbs);
+  const currentPertSheetId = String(pert.getSheetId());
+  const properties = PropertiesService.getDocumentProperties().getProperties();
+
+  return Object.keys(properties).some(key => {
+    return key !== currentPropertyKey &&
+      key.indexOf(PERT_SHEET_ID_PROPERTY_PREFIX) === 0 &&
+      properties[key] === currentPertSheetId;
+  });
+}
+
+function getPertSheetName_(wbsSheetName) {
+  if (wbsSheetName === DEFAULT_WBS_SHEET_NAME) return DEFAULT_PERT_SHEET_NAME;
+
+  WBS_SHEET_NAME_REPLACEMENT_PATTERN.lastIndex = 0;
+  const pertSheetName = wbsSheetName.replace(WBS_SHEET_NAME_REPLACEMENT_PATTERN, 'PERT Diagram').trim();
+  return truncateSheetName_(pertSheetName || DEFAULT_PERT_SHEET_NAME);
 }
 
 function getMappedSchedulingSheet_(ss, wbs) {
@@ -242,6 +316,9 @@ function computeSchedule_(orderedActivities) {
       lateStart: null,
       lateFinish: null,
       sourceRow: activity.sourceRow,
+      successors: successorsById.get(activity.id),
+      slack: null,
+      isCritical: false,
     });
   });
 
@@ -258,6 +335,8 @@ function computeSchedule_(orderedActivities) {
     }
 
     scheduledActivity.lateStart = scheduledActivity.lateFinish - scheduledActivity.duration + 1;
+    scheduledActivity.slack = scheduledActivity.lateStart - scheduledActivity.earlyStart;
+    scheduledActivity.isCritical = scheduledActivity.slack === 0;
   });
 
   return Array.from(scheduleById.values()).sort((a, b) => a.sourceRow - b.sourceRow);
@@ -316,6 +395,114 @@ function renderSchedule_(sched, schedule) {
   trimExtraScheduleColumns_(sched, timeline.length + GANTT_FIRST_COLUMN - 1);
   sched.setFrozenRows(SCHED_TIMELINE_DAYS_ROW);
   sched.setFrozenColumns(GANTT_FIRST_COLUMN - 1);
+}
+
+function renderPertDiagram_(pert, schedule) {
+  clearPertDiagram_(pert);
+
+  if (schedule.length === 0) return;
+
+  const layout = buildPertLayout_(schedule);
+  const rowsNeeded = Math.max(8, 4 + layout.maxLane * 5 + 4);
+  const columnsNeeded = Math.max(10, 1 + (layout.maxLevel + 1) * 6);
+  ensureSheetSize_(pert, rowsNeeded, columnsNeeded);
+
+  pert.getRange(1, 1, 1, columnsNeeded)
+    .mergeAcross()
+    .setValue('PERT DIAGRAM')
+    .setFontWeight('bold')
+    .setFontSize(14)
+    .setHorizontalAlignment('center');
+  pert.getRange(2, 1, 1, columnsNeeded)
+    .mergeAcross()
+    .setValue('Critical activities are highlighted in red. Each node shows Activity, Duration, ES/EF, LS/LF, Slack, and successor links.')
+    .setHorizontalAlignment('center');
+
+  schedule.forEach(activity => {
+    const position = layout.positions.get(activity.id);
+    const row = 4 + position.lane * 5;
+    const col = 1 + position.level * 6;
+    const nodeRange = pert.getRange(row, col, 4, 4);
+    nodeRange.merge()
+      .setValue(formatPertNodeLabel_(activity))
+      .setWrap(true)
+      .setVerticalAlignment('middle')
+      .setHorizontalAlignment('center')
+      .setBorder(true, true, true, true, true, true, '#000000', SpreadsheetApp.BorderStyle.SOLID)
+      .setBackground(activity.isCritical ? '#f4cccc' : '#d9ead3');
+
+    if (activity.successors.length > 0) {
+      const linkRange = pert.getRange(row + 1, col + 4, 2, 2);
+      linkRange.merge()
+        .setValue(`→ ${activity.successors.join(', ')}`)
+        .setWrap(true)
+        .setVerticalAlignment('middle')
+        .setHorizontalAlignment('center')
+        .setFontWeight(activity.isCritical ? 'bold' : 'normal');
+    }
+  });
+
+  renderPertLegend_(pert, rowsNeeded, columnsNeeded);
+  resizePertCells_(pert, rowsNeeded, columnsNeeded);
+  trimExtraScheduleColumns_(pert, columnsNeeded);
+  pert.setFrozenRows(2);
+}
+
+function buildPertLayout_(schedule) {
+  const byId = new Map(schedule.map(activity => [activity.id, activity]));
+  const levelById = new Map();
+
+  function getLevel(activity) {
+    if (levelById.has(activity.id)) return levelById.get(activity.id);
+
+    const level = activity.predecessors.length === 0
+      ? 0
+      : Math.max(...activity.predecessors.map(predecessorId => getLevel(byId.get(predecessorId)))) + 1;
+    levelById.set(activity.id, level);
+    return level;
+  }
+
+  schedule.forEach(activity => getLevel(activity));
+
+  const laneByLevel = new Map();
+  const positions = new Map();
+  let maxLane = 0;
+  let maxLevel = 0;
+
+  schedule.forEach(activity => {
+    const level = levelById.get(activity.id);
+    const lane = laneByLevel.get(level) || 0;
+    laneByLevel.set(level, lane + 1);
+    positions.set(activity.id, { level, lane });
+    maxLane = Math.max(maxLane, lane);
+    maxLevel = Math.max(maxLevel, level);
+  });
+
+  return { positions, maxLane, maxLevel };
+}
+
+function formatPertNodeLabel_(activity) {
+  return `${activity.id}: ${activity.name}
+Dur: ${activity.duration}
+ES ${activity.earlyStart} | EF ${activity.earlyFinish}
+LS ${activity.lateStart} | LF ${activity.lateFinish}
+Slack: ${activity.slack}`;
+}
+
+function renderPertLegend_(pert, rowsNeeded, columnsNeeded) {
+  const legendRow = rowsNeeded - 1;
+  pert.getRange(legendRow, 1).setValue('Legend').setFontWeight('bold');
+  pert.getRange(legendRow, 2).setValue('Critical path').setBackground('#f4cccc');
+  pert.getRange(legendRow, 3).setValue('Non-critical').setBackground('#d9ead3');
+  pert.getRange(legendRow, 4, 1, Math.max(1, columnsNeeded - 3))
+    .mergeAcross()
+    .setValue('ES/EF = Early Start/Finish; LS/LF = Late Start/Finish; Slack = LS - ES')
+    .setWrap(true);
+}
+
+function resizePertCells_(pert, rowsNeeded, columnsNeeded) {
+  pert.setColumnWidths(1, columnsNeeded, 80);
+  pert.setRowHeights(1, rowsNeeded, 28);
 }
 
 function renderTimelineHeaders_(sched, timeline) {
@@ -438,10 +625,18 @@ function ensureSheetSize_(sheet, requiredRows, requiredColumns) {
   }
 }
 
+function clearPertDiagram_(pert) {
+  clearSheet_(pert);
+}
+
 function clearSchedule_(sched) {
-  const rows = sched.getMaxRows();
-  const cols = sched.getMaxColumns();
-  sched.getRange(1, 1, rows, cols)
+  clearSheet_(sched);
+}
+
+function clearSheet_(sheet) {
+  const rows = sheet.getMaxRows();
+  const cols = sheet.getMaxColumns();
+  sheet.getRange(1, 1, rows, cols)
     .breakApart()
     .clearContent()
     .setBackground(null)
