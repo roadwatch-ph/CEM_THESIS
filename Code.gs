@@ -77,6 +77,13 @@ function generateScheduleForWbsSheet_(ss, wbs) {
 
   const rows = wbs.getRange(2, 1, lastRow - 1, 4).getValues();
   const activities = parseAndValidateWbs_(rows, wbs.getName());
+
+  if (activities.length === 0) {
+    clearSchedule_(sched);
+    clearPertDiagram_(pert);
+    return;
+  }
+
   const orderedActivities = topologicalSort_(activities);
   const schedule = computeSchedule_(orderedActivities);
 
@@ -236,6 +243,9 @@ function parseAndValidateWbs_(rows, wbsSheetName) {
 
   rows.forEach((row, index) => {
     const sheetRow = index + 2;
+
+    if (isBlankWbsRow_(row)) return;
+
     const id = normalizeId_(row[0]);
     const name = String(row[1] || '').trim();
     const predecessors = parsePredecessors_(row[2]);
@@ -861,14 +871,18 @@ function normalizeId_(value) {
   return String(value || '').trim();
 }
 
+function isBlankWbsRow_(row) {
+  return row.every(value => normalizeId_(value) === '');
+}
+
 function parsePredecessors_(value) {
   const text = String(value || '').trim();
-  if (!text || text === '-') return [];
+  if (!text || /^[-\u2013\u2014]$/.test(text)) return [];
 
   const predecessors = [];
   text.split(',').forEach(part => {
     const token = normalizeId_(part);
-    const rangeMatch = token.match(/^([A-Za-z]+|\d+)\s*-\s*([A-Za-z]+|\d+)$/);
+    const rangeMatch = token.match(/^([A-Za-z]+|\d+)\s*[-\u2013\u2014]\s*([A-Za-z]+|\d+)$/);
 
     if (rangeMatch) {
       expandPredecessorRange_(rangeMatch[1], rangeMatch[2]).forEach(id => predecessors.push(id));
@@ -892,14 +906,14 @@ function expandPredecessorRange_(startId, endId) {
     return expandAlphabeticRange_(startToken, endToken);
   }
 
-  return [`${startToken}-${endToken}`];
+  return [joinPredecessorRange_(startToken, endToken)];
 }
 
 function expandNumericRange_(startId, endId) {
   const start = Number(startId);
   const end = Number(endId);
   if (!Number.isInteger(start) || !Number.isInteger(end) || start > end) {
-    return [`${startId}-${endId}`];
+    return [joinPredecessorRange_(startId, endId)];
   }
 
   const expanded = [];
@@ -914,7 +928,7 @@ function expandNumericRange_(startId, endId) {
 function expandAlphabeticRange_(startId, endId) {
   const start = alphabeticIdToNumber_(startId);
   const end = alphabeticIdToNumber_(endId);
-  if (start > end) return [`${startId}-${endId}`];
+  if (start > end) return [joinPredecessorRange_(startId, endId)];
 
   const expanded = [];
 
@@ -923,6 +937,10 @@ function expandAlphabeticRange_(startId, endId) {
   }
 
   return expanded;
+}
+
+function joinPredecessorRange_(startId, endId) {
+  return `${startId}-${endId}`;
 }
 
 function alphabeticIdToNumber_(id) {
