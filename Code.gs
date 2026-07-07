@@ -1,5 +1,5 @@
 /**
- * Generate a validated construction schedule and Gantt chart from the WBS sheet.
+ * Generate validated construction schedules and Gantt charts from WBS sheets.
  *
  * Expected WBS columns:
  *   A: Activity
@@ -23,6 +23,8 @@ const DEFAULT_WBS_SHEET_NAME = 'WBS';
 const DEFAULT_SCHED_SHEET_NAME = 'Scheduling';
 const WBS_SHEET_NAME_PATTERN = /(^|\b)WBS($|\b)/i;
 const WBS_SHEET_NAME_REPLACEMENT_PATTERN = /WBS/ig;
+const SCHEDULING_SHEET_ID_PROPERTY_PREFIX = 'schedulingSheetIdForWbs_';
+const MAX_SHEET_NAME_LENGTH = 100;
 
 function generateSchedule() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -66,8 +68,57 @@ function isSchedulingSheetName_(sheetName) {
 }
 
 function getOrCreateSchedulingSheet_(ss, wbs) {
-  const schedulingSheetName = getSchedulingSheetName_(wbs.getName());
-  return ss.getSheetByName(schedulingSheetName) || ss.insertSheet(schedulingSheetName, wbs.getIndex());
+  const existingMappedSheet = getMappedSchedulingSheet_(ss, wbs);
+  if (existingMappedSheet) return existingMappedSheet;
+
+  const schedulingSheetName = getAvailableSchedulingSheetName_(ss, wbs);
+  const existingSheet = ss.getSheetByName(schedulingSheetName);
+  const sched = existingSheet || ss.insertSheet(schedulingSheetName, wbs.getIndex());
+  saveSchedulingSheetMapping_(wbs, sched);
+  return sched;
+}
+
+function getMappedSchedulingSheet_(ss, wbs) {
+  const sheetId = PropertiesService.getDocumentProperties().getProperty(getSchedulingSheetPropertyKey_(wbs));
+  if (!sheetId) return null;
+
+  const sched = ss.getSheetById(Number(sheetId));
+  return sched && !isWbsSheetName_(sched.getName()) ? sched : null;
+}
+
+function saveSchedulingSheetMapping_(wbs, sched) {
+  PropertiesService.getDocumentProperties().setProperty(getSchedulingSheetPropertyKey_(wbs), String(sched.getSheetId()));
+}
+
+function getSchedulingSheetPropertyKey_(wbs) {
+  return `${SCHEDULING_SHEET_ID_PROPERTY_PREFIX}${wbs.getSheetId()}`;
+}
+
+function getAvailableSchedulingSheetName_(ss, wbs) {
+  const baseName = getSchedulingSheetName_(wbs.getName());
+  const baseSheet = ss.getSheetByName(baseName);
+  if (!baseSheet || !isSchedulingSheetMappedToOtherWbs_(baseSheet, wbs)) return baseName;
+
+  for (let counter = 2; counter < 1000; counter++) {
+    const suffix = ` ${counter}`;
+    const candidate = `${baseName.slice(0, MAX_SHEET_NAME_LENGTH - suffix.length)}${suffix}`;
+    const candidateSheet = ss.getSheetByName(candidate);
+    if (!candidateSheet || !isSchedulingSheetMappedToOtherWbs_(candidateSheet, wbs)) return candidate;
+  }
+
+  throw new Error(`Could not create a unique Scheduling tab for ${wbs.getName()}.`);
+}
+
+function isSchedulingSheetMappedToOtherWbs_(sched, wbs) {
+  const currentPropertyKey = getSchedulingSheetPropertyKey_(wbs);
+  const currentScheduleSheetId = String(sched.getSheetId());
+  const properties = PropertiesService.getDocumentProperties().getProperties();
+
+  return Object.keys(properties).some(key => {
+    return key !== currentPropertyKey &&
+      key.indexOf(SCHEDULING_SHEET_ID_PROPERTY_PREFIX) === 0 &&
+      properties[key] === currentScheduleSheetId;
+  });
 }
 
 function getSchedulingSheetName_(wbsSheetName) {
@@ -75,7 +126,11 @@ function getSchedulingSheetName_(wbsSheetName) {
 
   WBS_SHEET_NAME_REPLACEMENT_PATTERN.lastIndex = 0;
   const schedulingSheetName = wbsSheetName.replace(WBS_SHEET_NAME_REPLACEMENT_PATTERN, 'Scheduling').trim();
-  return schedulingSheetName || DEFAULT_SCHED_SHEET_NAME;
+  return truncateSheetName_(schedulingSheetName || DEFAULT_SCHED_SHEET_NAME);
+}
+
+function truncateSheetName_(sheetName) {
+  return sheetName.slice(0, MAX_SHEET_NAME_LENGTH);
 }
 
 function parseAndValidateWbs_(rows, wbsSheetName) {
