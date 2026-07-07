@@ -28,13 +28,23 @@ const MAX_SHEET_NAME_LENGTH = 100;
 
 function generateSchedule() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const wbsSheets = getWbsSheets_(ss);
 
-  if (wbsSheets.length === 0) {
+  if (!generateScheduleForSpreadsheet_(ss)) {
     throw new Error(`Missing WBS sheet. Create a sheet with "WBS" in the tab name.`);
   }
+}
+
+function autoGenerateSchedule() {
+  generateScheduleForSpreadsheet_(SpreadsheetApp.getActiveSpreadsheet());
+}
+
+function generateScheduleForSpreadsheet_(ss) {
+  const wbsSheets = getWbsSheets_(ss);
+
+  if (wbsSheets.length === 0) return false;
 
   wbsSheets.forEach(wbs => generateScheduleForWbsSheet_(ss, wbs));
+  return true;
 }
 
 function generateScheduleForWbsSheet_(ss, wbs) {
@@ -281,6 +291,19 @@ function renderSchedule_(sched, schedule) {
   resizeGanttCells_(sched, schedule.length + 1, timeline.length);
 }
 
+
+/**
+ * Automatically create/regenerate Scheduling tabs when the spreadsheet opens.
+ *
+ * This catches existing or newly added WBS tabs even before a user edits activity
+ * rows, so a matching Scheduling tab appears as soon as the script detects a
+ * sheet with "WBS" in its name.
+ */
+function onOpen(e) {
+  const ss = e && e.source ? e.source : SpreadsheetApp.getActiveSpreadsheet();
+  generateScheduleForSpreadsheet_(ss);
+}
+
 /**
  * Automatically regenerate the schedule after edits on the WBS sheet.
  *
@@ -304,13 +327,13 @@ function onEdit(e) {
 function installAutoScheduleTrigger() {
   const ss = SpreadsheetApp.getActive();
   const existingTrigger = ScriptApp.getProjectTriggers().some(trigger => {
-    return trigger.getHandlerFunction() === 'generateSchedule' &&
+    return trigger.getHandlerFunction() === 'autoGenerateSchedule' &&
       trigger.getEventType() === ScriptApp.EventType.ON_CHANGE;
   });
 
   if (existingTrigger) return;
 
-  ScriptApp.newTrigger('generateSchedule')
+  ScriptApp.newTrigger('autoGenerateSchedule')
     .forSpreadsheet(ss)
     .onChange()
     .create();
