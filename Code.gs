@@ -4,22 +4,15 @@
  * Expected WBS columns:
  *   A: Activity No.
  *   B: Activity / Activities
- *   C: Predecessor (dash/blank for none, comma-separated IDs and ranges like 28,29 or 30-33)
+ *   C: Predecessor (dash/blank for none, comma-separated IDs for multiple)
  *   D: Duration
  *
  * Scheduling output:
- *   Row 2: headers, matching the current Scheduling sheet layout
  *   A-D: copied WBS details
- *   E: Early Start
- *   F: Early Finish
- *   G: Late Start
- *   H: Late Finish
- *   I onward: Gantt timeline
+ *   E: Start Day
+ *   F: Finish Day
+ *   G onward: Gantt timeline
  */
-const SCHED_HEADER_ROW = 2;
-const SCHED_FIRST_DATA_ROW = SCHED_HEADER_ROW + 1;
-const GANTT_FIRST_COLUMN = 9;
-
 function generateSchedule() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const wbs = ss.getSheetByName('WBS');
