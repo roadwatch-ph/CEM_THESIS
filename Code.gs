@@ -533,66 +533,59 @@ function renderPertArrow_(pert, sourceRow, sourceCol, targetRow, targetCol) {
   const sourceMiddleRow = sourceRow + Math.floor(PERT_NODE_HEIGHT / 2);
   const targetMiddleRow = targetRow + Math.floor(PERT_NODE_HEIGHT / 2);
   const startCol = sourceCol + PERT_NODE_WIDTH;
-  const endCol = targetCol - 1;
+  const arrowHeadCol = targetCol - 1;
 
-  if (endCol < startCol) return;
+  if (arrowHeadCol < startCol) return;
 
   if (sourceMiddleRow === targetMiddleRow) {
-    renderPertArrowSegment_(pert, sourceMiddleRow, startCol, endCol, buildPertArrowCells_(endCol - startCol + 1, '➜'));
+    renderPertHorizontalArrowLine_(pert, sourceMiddleRow, startCol, arrowHeadCol);
+    renderPertArrowHead_(pert, targetMiddleRow, arrowHeadCol, '➜');
     return;
   }
 
-  const bendCol = Math.max(startCol, Math.min(endCol, startCol + Math.floor((endCol - startCol) / 2)));
-  if (bendCol > startCol) {
-    renderPertArrowSegment_(pert, sourceMiddleRow, startCol, bendCol - 1, buildPertArrowCells_(bendCol - startCol, '━'));
-  }
-
-  renderPertDiagonalArrow_(pert, sourceMiddleRow, bendCol, targetMiddleRow, endCol);
+  const bendCol = Math.max(startCol, Math.min(arrowHeadCol, startCol + Math.floor((arrowHeadCol - startCol) / 2)));
+  renderPertHorizontalConnector_(pert, sourceMiddleRow, startCol, bendCol);
+  renderPertVerticalConnector_(pert, bendCol, sourceMiddleRow, targetMiddleRow);
+  renderPertHorizontalArrowLine_(pert, targetMiddleRow, bendCol, arrowHeadCol);
+  renderPertArrowHead_(pert, targetMiddleRow, arrowHeadCol, '➜');
 }
 
-function renderPertDiagonalArrow_(pert, sourceRow, sourceCol, targetRow, targetCol) {
-  const rowStep = targetRow > sourceRow ? 1 : -1;
-  const rowDistance = Math.abs(targetRow - sourceRow);
-  const colDistance = Math.max(1, targetCol - sourceCol + 1);
-  const diagonalGlyph = rowStep > 0 ? '╲' : '╱';
-  const arrowHead = rowStep > 0 ? '↘' : '↗';
-  const usedCells = new Set();
-
-  for (let index = 0; index < colDistance; index++) {
-    const progress = colDistance === 1 ? 1 : index / (colDistance - 1);
-    const row = sourceRow + Math.round(progress * rowDistance) * rowStep;
-    const col = sourceCol + index;
-    const isLast = index === colDistance - 1;
-    const glyph = isLast ? arrowHead : (row === sourceRow || row === targetRow ? '━' : diagonalGlyph);
-    const key = `${row}:${col}`;
-
-    if (!usedCells.has(key)) {
-      renderPertArrowCell_(pert, row, col, glyph);
-      usedCells.add(key);
-    }
+function renderPertHorizontalArrowLine_(pert, row, startCol, arrowHeadCol) {
+  if (arrowHeadCol > startCol) {
+    renderPertHorizontalConnector_(pert, row, startCol, arrowHeadCol - 1);
   }
 }
 
-function renderPertArrowSegment_(pert, row, startCol, endCol, values) {
+function renderPertHorizontalConnector_(pert, row, startCol, endCol) {
+  if (endCol < startCol) return;
+
   const connectorRange = pert.getRange(row, startCol, 1, endCol - startCol + 1);
   breakApartOverlappingMergedRanges_(connectorRange);
   connectorRange
-    .setValues([values])
+    .clearContent()
+    .setBorder(true, null, null, null, false, false, PERT_ARROW_COLOR, SpreadsheetApp.BorderStyle.SOLID_MEDIUM);
+}
+
+function renderPertVerticalConnector_(pert, col, startRow, endRow) {
+  const topRow = Math.min(startRow, endRow);
+  const rowCount = Math.abs(endRow - startRow) + 1;
+  const connectorRange = pert.getRange(topRow, col, rowCount, 1);
+  breakApartOverlappingMergedRanges_(connectorRange);
+  connectorRange
+    .clearContent()
+    .setBorder(null, true, null, null, false, false, PERT_ARROW_COLOR, SpreadsheetApp.BorderStyle.SOLID_MEDIUM);
+}
+
+function renderPertArrowHead_(pert, row, col, glyph) {
+  const arrowHeadRange = pert.getRange(row, col);
+  breakApartOverlappingMergedRanges_(arrowHeadRange);
+  arrowHeadRange
+    .setValue(glyph)
     .setVerticalAlignment('middle')
-    .setHorizontalAlignment('center')
+    .setHorizontalAlignment('right')
     .setFontColor(PERT_ARROW_COLOR)
     .setFontSize(PERT_ARROW_FONT_SIZE)
     .setFontWeight('normal');
-}
-
-function renderPertArrowCell_(pert, row, col, glyph) {
-  renderPertArrowSegment_(pert, row, col, col, [glyph]);
-}
-
-function buildPertArrowCells_(connectorWidth, arrowHead) {
-  return Array.from({ length: connectorWidth }, (_, index) => {
-    return index === connectorWidth - 1 ? arrowHead : '━';
-  });
 }
 
 function renderPertLegend_(pert, rowsNeeded, columnsNeeded) {
