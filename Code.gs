@@ -18,14 +18,17 @@
 const SCHED_HEADER_ROW = 1;
 const SCHED_FIRST_DATA_ROW = SCHED_HEADER_ROW + 1;
 const GANTT_FIRST_COLUMN = 9;
+const GANTT_CELL_SIZE_PX = 20;
+const WBS_SHEET_NAME = 'WBS';
+const SCHED_SHEET_NAME = 'Scheduling';
 
 function generateSchedule() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const wbs = ss.getSheetByName('WBS');
-  const sched = ss.getSheetByName('Scheduling');
+  const wbs = ss.getSheetByName(WBS_SHEET_NAME);
+  const sched = ss.getSheetByName(SCHED_SHEET_NAME);
 
-  if (!wbs) throw new Error('Missing sheet: WBS');
-  if (!sched) throw new Error('Missing sheet: Scheduling');
+  if (!wbs) throw new Error(`Missing sheet: ${WBS_SHEET_NAME}`);
+  if (!sched) throw new Error(`Missing sheet: ${SCHED_SHEET_NAME}`);
 
   const lastRow = wbs.getLastRow();
   if (lastRow < 2) {
@@ -186,6 +189,49 @@ function renderSchedule_(sched, schedule) {
     return day >= activity.earlyStart && day <= activity.earlyFinish ? '#4CAF50' : null;
   }));
   sched.getRange(SCHED_FIRST_DATA_ROW, GANTT_FIRST_COLUMN, backgrounds.length, timeline.length).setBackgrounds(backgrounds);
+  resizeGanttCells_(sched, schedule.length + 1, timeline.length);
+}
+
+/**
+ * Automatically regenerate the schedule after edits on the WBS sheet.
+ *
+ * Simple triggers run automatically for user edits, so this removes the need
+ * to manually re-run generateSchedule after changing WBS activity data.
+ */
+function onEdit(e) {
+  if (!e || !e.range) return;
+
+  const editedSheet = e.range.getSheet();
+  if (editedSheet.getName() !== WBS_SHEET_NAME) return;
+
+  generateSchedule();
+}
+
+/**
+ * Optional one-time setup for an installable change trigger.
+ * Run this once if you also want schedule regeneration after structural
+ * spreadsheet changes such as inserting/removing rows or columns.
+ */
+function installAutoScheduleTrigger() {
+  const ss = SpreadsheetApp.getActive();
+  const existingTrigger = ScriptApp.getProjectTriggers().some(trigger => {
+    return trigger.getHandlerFunction() === 'generateSchedule' &&
+      trigger.getEventType() === ScriptApp.EventType.ON_CHANGE;
+  });
+
+  if (existingTrigger) return;
+
+  ScriptApp.newTrigger('generateSchedule')
+    .forSpreadsheet(ss)
+    .onChange()
+    .create();
+}
+
+function resizeGanttCells_(sched, rowCount, columnCount) {
+  if (rowCount <= 0 || columnCount <= 0) return;
+
+  sched.setColumnWidths(GANTT_FIRST_COLUMN, columnCount, GANTT_CELL_SIZE_PX);
+  sched.setRowHeights(SCHED_HEADER_ROW, rowCount, GANTT_CELL_SIZE_PX);
 }
 
 function ensureSheetSize_(sheet, requiredRows, requiredColumns) {
