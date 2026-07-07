@@ -409,13 +409,17 @@ function renderPertDiagram_(pert, schedule) {
   ensureSheetSize_(pert, rowsNeeded, columnsNeeded);
   trimExtraScheduleColumns_(pert, columnsNeeded);
 
-  pert.getRange(1, 1, 1, columnsNeeded)
+  const pertTitleRange = pert.getRange(1, 1, 1, columnsNeeded);
+  breakApartOverlappingMergedRanges_(pertTitleRange);
+  pertTitleRange
     .mergeAcross()
     .setValue('PERT DIAGRAM')
     .setFontWeight('bold')
     .setFontSize(14)
     .setHorizontalAlignment('center');
-  pert.getRange(2, 1, 1, columnsNeeded)
+  const pertDescriptionRange = pert.getRange(2, 1, 1, columnsNeeded);
+  breakApartOverlappingMergedRanges_(pertDescriptionRange);
+  pertDescriptionRange
     .mergeAcross()
     .setValue('Critical activities are highlighted in red. Each node shows Activity, Duration, ES/EF, LS/LF, Slack, and successor links.')
     .setHorizontalAlignment('center');
@@ -425,6 +429,7 @@ function renderPertDiagram_(pert, schedule) {
     const row = 4 + position.lane * 5;
     const col = 1 + position.level * 6;
     const nodeRange = pert.getRange(row, col, 4, 4);
+    breakApartOverlappingMergedRanges_(nodeRange);
     nodeRange.merge()
       .setValue(formatPertNodeLabel_(activity))
       .setWrap(true)
@@ -435,6 +440,7 @@ function renderPertDiagram_(pert, schedule) {
 
     if (activity.successors.length > 0) {
       const linkRange = pert.getRange(row + 1, col + 4, 2, 2);
+      breakApartOverlappingMergedRanges_(linkRange);
       linkRange.merge()
         .setValue(`→ ${activity.successors.join(', ')}`)
         .setWrap(true)
@@ -494,7 +500,9 @@ function renderPertLegend_(pert, rowsNeeded, columnsNeeded) {
   pert.getRange(legendRow, 1).setValue('Legend').setFontWeight('bold');
   pert.getRange(legendRow, 2).setValue('Critical path').setBackground('#f4cccc');
   pert.getRange(legendRow, 3).setValue('Non-critical').setBackground('#d9ead3');
-  pert.getRange(legendRow, 4, 1, Math.max(1, columnsNeeded - 3))
+  const legendDescriptionRange = pert.getRange(legendRow, 4, 1, Math.max(1, columnsNeeded - 3));
+  breakApartOverlappingMergedRanges_(legendDescriptionRange);
+  legendDescriptionRange
     .mergeAcross()
     .setValue('ES/EF = Early Start/Finish; LS/LF = Late Start/Finish; Slack = LS - ES')
     .setWrap(true);
@@ -507,6 +515,7 @@ function resizePertCells_(pert, rowsNeeded, columnsNeeded) {
 
 function renderTimelineHeaders_(sched, timeline) {
   const timelineLabelRange = sched.getRange(SCHED_TIMELINE_LABEL_ROW, GANTT_FIRST_COLUMN, 1, timeline.length);
+  breakApartOverlappingMergedRanges_(timelineLabelRange);
   timelineLabelRange.mergeAcross().setValue('NUMBER OF DAYS');
 
   renderTensHeaders_(sched, timeline);
@@ -521,6 +530,7 @@ function renderTimelineHeaders_(sched, timeline) {
 
 function renderTensHeaders_(sched, timeline) {
   const tensHeaderRange = sched.getRange(SCHED_TIMELINE_TENS_ROW, GANTT_FIRST_COLUMN, 1, timeline.length);
+  breakApartOverlappingMergedRanges_(tensHeaderRange);
   tensHeaderRange.clearContent();
 
   for (let startDay = 1; startDay <= timeline.length; startDay += 10) {
@@ -529,6 +539,7 @@ function renderTensHeaders_(sched, timeline) {
     const headerRange = sched.getRange(SCHED_TIMELINE_TENS_ROW, GANTT_FIRST_COLUMN + startDay - 1, 1, endDay - startDay + 1);
 
     if (endDay > startDay) {
+      breakApartOverlappingMergedRanges_(headerRange);
       headerRange.mergeAcross();
     }
 
@@ -638,6 +649,10 @@ function breakApartMergedRanges_(sheet) {
   const rows = sheet.getMaxRows();
   const cols = sheet.getMaxColumns();
   sheet.getRange(1, 1, rows, cols).getMergedRanges().forEach(range => range.breakApart());
+}
+
+function breakApartOverlappingMergedRanges_(range) {
+  range.getMergedRanges().forEach(mergedRange => mergedRange.breakApart());
 }
 
 function clearSheet_(sheet) {
