@@ -421,32 +421,25 @@ function renderPertDiagram_(pert, schedule) {
   breakApartOverlappingMergedRanges_(pertDescriptionRange);
   pertDescriptionRange
     .mergeAcross()
-    .setValue('Critical activities are highlighted in red. Each node shows Activity, Duration, ES/EF, LS/LF, Slack, and successor links.')
+    .setValue('Each node shows ES, Duration, EF on top; Activity in the middle; and LS, Slack, LF on the bottom. Successor links use black arrows.')
     .setHorizontalAlignment('center');
 
   schedule.forEach(activity => {
     const position = layout.positions.get(activity.id);
     const row = 4 + position.lane * 5;
     const col = 1 + position.level * 6;
-    const nodeRange = pert.getRange(row, col, 4, 4);
-    breakApartOverlappingMergedRanges_(nodeRange);
-    nodeRange.merge()
-      .setValue(formatPertNodeLabel_(activity))
-      .setWrap(true)
-      .setVerticalAlignment('middle')
-      .setHorizontalAlignment('center')
-      .setBorder(true, true, true, true, true, true, '#000000', SpreadsheetApp.BorderStyle.SOLID)
-      .setBackground(activity.isCritical ? '#f4cccc' : '#d9ead3');
+    renderPertNode_(pert, row, col, activity);
 
     if (activity.successors.length > 0) {
-      const linkRange = pert.getRange(row + 1, col + 4, 2, 2);
+      const linkRange = pert.getRange(row + 1, col + 3, 1, 3);
       breakApartOverlappingMergedRanges_(linkRange);
       linkRange.merge()
         .setValue(`→ ${activity.successors.join(', ')}`)
         .setWrap(true)
         .setVerticalAlignment('middle')
         .setHorizontalAlignment('center')
-        .setFontWeight(activity.isCritical ? 'bold' : 'normal');
+        .setFontColor('#000000')
+        .setFontWeight('normal');
     }
   });
 
@@ -487,24 +480,42 @@ function buildPertLayout_(schedule) {
   return { positions, maxLane, maxLevel };
 }
 
-function formatPertNodeLabel_(activity) {
-  return `${activity.id}: ${activity.name}
-Dur: ${activity.duration}
-ES ${activity.earlyStart} | EF ${activity.earlyFinish}
-LS ${activity.lateStart} | LF ${activity.lateFinish}
-Slack: ${activity.slack}`;
+function renderPertNode_(pert, row, col, activity) {
+  const nodeRange = pert.getRange(row, col, 3, 3);
+  breakApartOverlappingMergedRanges_(nodeRange);
+  nodeRange
+    .setValues([
+      [activity.earlyStart, activity.duration, activity.earlyFinish],
+      [activity.id, '', ''],
+      [activity.lateStart, activity.slack, activity.lateFinish],
+    ])
+    .setWrap(true)
+    .setVerticalAlignment('middle')
+    .setHorizontalAlignment('center')
+    .setBackground('#ffffff')
+    .setFontColor('#000000')
+    .setBorder(true, true, true, true, true, true, '#000000', SpreadsheetApp.BorderStyle.SOLID);
+
+  const activityRange = pert.getRange(row + 1, col, 1, 3);
+  breakApartOverlappingMergedRanges_(activityRange);
+  activityRange
+    .mergeAcross()
+    .setValue(activity.id)
+    .setFontWeight('bold')
+    .setVerticalAlignment('middle')
+    .setHorizontalAlignment('center')
+    .setBackground('#ffffff')
+    .setBorder(true, true, true, true, null, null, '#000000', SpreadsheetApp.BorderStyle.SOLID);
 }
 
 function renderPertLegend_(pert, rowsNeeded, columnsNeeded) {
   const legendRow = rowsNeeded - 1;
   pert.getRange(legendRow, 1).setValue('Legend').setFontWeight('bold');
-  pert.getRange(legendRow, 2).setValue('Critical path').setBackground('#f4cccc');
-  pert.getRange(legendRow, 3).setValue('Non-critical').setBackground('#d9ead3');
-  const legendDescriptionRange = pert.getRange(legendRow, 4, 1, Math.max(1, columnsNeeded - 3));
+  const legendDescriptionRange = pert.getRange(legendRow, 2, 1, Math.max(1, columnsNeeded - 1));
   breakApartOverlappingMergedRanges_(legendDescriptionRange);
   legendDescriptionRange
     .mergeAcross()
-    .setValue('ES/EF = Early Start/Finish; LS/LF = Late Start/Finish; Slack = LS - ES')
+    .setValue('Top: ES | Duration | EF; Middle: Activity; Bottom: LS | Slack | LF')
     .setWrap(true);
 }
 
