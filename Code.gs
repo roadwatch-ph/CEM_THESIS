@@ -9,10 +9,16 @@
  *
  * Scheduling output:
  *   A-D: copied WBS details
- *   E: Start Day
- *   F: Finish Day
- *   G onward: Gantt timeline
+ *   E: Early Start
+ *   F: Early Finish
+ *   G: Late Start
+ *   H: Late Finish
+ *   I onward: Gantt timeline
  */
+const SCHED_HEADER_ROW = 1;
+const SCHED_FIRST_DATA_ROW = SCHED_HEADER_ROW + 1;
+const GANTT_FIRST_COLUMN = 9;
+
 function generateSchedule() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const wbs = ss.getSheetByName('WBS');
