@@ -26,6 +26,12 @@ const SCHED_TIMELINE_DAYS_ROW = 3;
 const SCHED_FIRST_DATA_ROW = 4;
 const GANTT_FIRST_COLUMN = 9;
 const GANTT_CELL_SIZE_PX = 20;
+const PERT_NODE_ROW_SPACING = 5;
+const PERT_NODE_COLUMN_SPACING = 7;
+const PERT_NODE_HEIGHT = 3;
+const PERT_NODE_WIDTH = 3;
+const PERT_ARROW_COLOR = '#000000';
+const PERT_ARROW_FONT_SIZE = 16;
 const DEFAULT_WBS_SHEET_NAME = 'WBS';
 const DEFAULT_SCHED_SHEET_NAME = 'Scheduling';
 const DEFAULT_PERT_SHEET_NAME = 'PERT Diagram';
@@ -404,8 +410,8 @@ function renderPertDiagram_(pert, schedule) {
   if (schedule.length === 0) return;
 
   const layout = buildPertLayout_(schedule);
-  const rowsNeeded = Math.max(8, 4 + layout.maxLane * 5 + 4);
-  const columnsNeeded = Math.max(10, 1 + (layout.maxLevel + 1) * 6);
+  const rowsNeeded = Math.max(8, 4 + layout.maxLane * PERT_NODE_ROW_SPACING + 4);
+  const columnsNeeded = Math.max(10, 1 + (layout.maxLevel + 1) * PERT_NODE_COLUMN_SPACING);
   ensureSheetSize_(pert, rowsNeeded, columnsNeeded);
   trimExtraScheduleColumns_(pert, columnsNeeded);
 
@@ -421,13 +427,13 @@ function renderPertDiagram_(pert, schedule) {
   breakApartOverlappingMergedRanges_(pertDescriptionRange);
   pertDescriptionRange
     .mergeAcross()
-    .setValue('Each node shows ES, Duration, EF on top; Activity in the middle; and LS, Slack, LF on the bottom. Successor links use thin black directional arrows.')
+    .setValue('Each node shows ES, Duration, EF on top; Activity in the middle; and LS, Slack, LF on the bottom. Successor links use black directional arrows that point into the next activity node.')
     .setHorizontalAlignment('center');
 
   schedule.forEach(activity => {
     const position = layout.positions.get(activity.id);
-    const row = 4 + position.lane * 5;
-    const col = 1 + position.level * 6;
+    const row = getPertNodeRow_(position);
+    const col = getPertNodeColumn_(position);
     renderPertNode_(pert, row, col, activity);
   });
 
@@ -501,44 +507,92 @@ function renderPertNode_(pert, row, col, activity) {
 function renderPertArrows_(pert, schedule, layout) {
   schedule.forEach(activity => {
     const sourcePosition = layout.positions.get(activity.id);
-    const sourceRow = 4 + sourcePosition.lane * 5;
-    const sourceCol = 1 + sourcePosition.level * 6;
+    const sourceRow = getPertNodeRow_(sourcePosition);
+    const sourceCol = getPertNodeColumn_(sourcePosition);
 
     activity.successors.forEach(successorId => {
       const targetPosition = layout.positions.get(successorId);
       if (!targetPosition) return;
 
-      const targetRow = 4 + targetPosition.lane * 5;
-      const targetCol = 1 + targetPosition.level * 6;
-      const rowDelta = targetRow - sourceRow;
-      const arrow = getPertArrowSymbol_(rowDelta);
-      const connectorRow = rowDelta === 0 ? sourceRow + 1 : sourceRow + 1 + Math.round(rowDelta / 2);
-      const connectorColumn = sourceCol + 3;
-      const connectorWidth = Math.max(1, targetCol - sourceCol - 3);
-      const connectorRange = pert.getRange(connectorRow, connectorColumn, 1, connectorWidth);
-
-      breakApartOverlappingMergedRanges_(connectorRange);
-      connectorRange
-        .setValues([buildPertArrowCells_(connectorWidth, arrow)])
-        .setVerticalAlignment('middle')
-        .setHorizontalAlignment('center')
-        .setFontColor('#000000')
-        .setFontSize(14)
-        .setFontWeight('normal');
+      const targetRow = getPertNodeRow_(targetPosition);
+      const targetCol = getPertNodeColumn_(targetPosition);
+      renderPertArrow_(pert, sourceRow, sourceCol, targetRow, targetCol);
     });
   });
 }
 
-function buildPertArrowCells_(connectorWidth, arrowHead) {
-  return Array.from({ length: connectorWidth }, (_, index) => {
-    return index === connectorWidth - 1 ? arrowHead : '─';
-  });
+function getPertNodeRow_(position) {
+  return 4 + position.lane * PERT_NODE_ROW_SPACING;
 }
 
-function getPertArrowSymbol_(rowDelta) {
-  if (rowDelta < 0) return '↗';
-  if (rowDelta > 0) return '↘';
-  return '→';
+function getPertNodeColumn_(position) {
+  return 1 + position.level * PERT_NODE_COLUMN_SPACING;
+}
+
+function renderPertArrow_(pert, sourceRow, sourceCol, targetRow, targetCol) {
+  const sourceMiddleRow = sourceRow + Math.floor(PERT_NODE_HEIGHT / 2);
+  const targetMiddleRow = targetRow + Math.floor(PERT_NODE_HEIGHT / 2);
+  const startCol = sourceCol + PERT_NODE_WIDTH;
+  const endCol = targetCol - 1;
+
+  if (endCol < startCol) return;
+
+  if (sourceMiddleRow === targetMiddleRow) {
+    renderPertArrowSegment_(pert, sourceMiddleRow, startCol, endCol, buildPertArrowCells_(endCol - startCol + 1, '➜'));
+    return;
+  }
+
+  const bendCol = Math.max(startCol, Math.min(endCol, startCol + Math.floor((endCol - startCol) / 2)));
+  if (bendCol > startCol) {
+    renderPertArrowSegment_(pert, sourceMiddleRow, startCol, bendCol - 1, buildPertArrowCells_(bendCol - startCol, '━'));
+  }
+
+  renderPertDiagonalArrow_(pert, sourceMiddleRow, bendCol, targetMiddleRow, endCol);
+}
+
+function renderPertDiagonalArrow_(pert, sourceRow, sourceCol, targetRow, targetCol) {
+  const rowStep = targetRow > sourceRow ? 1 : -1;
+  const rowDistance = Math.abs(targetRow - sourceRow);
+  const colDistance = Math.max(1, targetCol - sourceCol + 1);
+  const diagonalGlyph = rowStep > 0 ? '╲' : '╱';
+  const arrowHead = rowStep > 0 ? '↘' : '↗';
+  const usedCells = new Set();
+
+  for (let index = 0; index < colDistance; index++) {
+    const progress = colDistance === 1 ? 1 : index / (colDistance - 1);
+    const row = sourceRow + Math.round(progress * rowDistance) * rowStep;
+    const col = sourceCol + index;
+    const isLast = index === colDistance - 1;
+    const glyph = isLast ? arrowHead : (row === sourceRow || row === targetRow ? '━' : diagonalGlyph);
+    const key = `${row}:${col}`;
+
+    if (!usedCells.has(key)) {
+      renderPertArrowCell_(pert, row, col, glyph);
+      usedCells.add(key);
+    }
+  }
+}
+
+function renderPertArrowSegment_(pert, row, startCol, endCol, values) {
+  const connectorRange = pert.getRange(row, startCol, 1, endCol - startCol + 1);
+  breakApartOverlappingMergedRanges_(connectorRange);
+  connectorRange
+    .setValues([values])
+    .setVerticalAlignment('middle')
+    .setHorizontalAlignment('center')
+    .setFontColor(PERT_ARROW_COLOR)
+    .setFontSize(PERT_ARROW_FONT_SIZE)
+    .setFontWeight('normal');
+}
+
+function renderPertArrowCell_(pert, row, col, glyph) {
+  renderPertArrowSegment_(pert, row, col, col, [glyph]);
+}
+
+function buildPertArrowCells_(connectorWidth, arrowHead) {
+  return Array.from({ length: connectorWidth }, (_, index) => {
+    return index === connectorWidth - 1 ? arrowHead : '━';
+  });
 }
 
 function renderPertLegend_(pert, rowsNeeded, columnsNeeded) {
