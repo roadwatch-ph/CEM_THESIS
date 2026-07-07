@@ -321,14 +321,33 @@ function renderTimelineHeaders_(sched, timeline) {
   const timelineLabelRange = sched.getRange(SCHED_TIMELINE_LABEL_ROW, GANTT_FIRST_COLUMN, 1, timeline.length);
   timelineLabelRange.mergeAcross().setValue('NUMBER OF DAYS');
 
-  const tensLabels = timeline.map(day => day % 10 === 0 ? day : '');
-  sched.getRange(SCHED_TIMELINE_TENS_ROW, GANTT_FIRST_COLUMN, 1, timeline.length).setValues([tensLabels]);
+  renderTensHeaders_(sched, timeline);
   sched.getRange(SCHED_TIMELINE_DAYS_ROW, GANTT_FIRST_COLUMN, 1, timeline.length).setValues([timeline]);
 
   sched.getRange(SCHED_TIMELINE_LABEL_ROW, GANTT_FIRST_COLUMN, SCHED_TIMELINE_DAYS_ROW, timeline.length)
     .setFontWeight('bold')
     .setHorizontalAlignment('center')
     .setVerticalAlignment('middle');
+}
+
+
+function renderTensHeaders_(sched, timeline) {
+  const tensHeaderRange = sched.getRange(SCHED_TIMELINE_TENS_ROW, GANTT_FIRST_COLUMN, 1, timeline.length);
+  tensHeaderRange.clearContent();
+
+  for (let startDay = 1; startDay <= timeline.length; startDay += 10) {
+    const endDay = Math.min(startDay + 9, timeline.length);
+    const headerLabel = endDay - startDay + 1 === 10 ? endDay : '';
+    const headerRange = sched.getRange(SCHED_TIMELINE_TENS_ROW, GANTT_FIRST_COLUMN + startDay - 1, 1, endDay - startDay + 1);
+
+    if (endDay > startDay) {
+      headerRange.mergeAcross();
+    }
+
+    if (headerLabel) {
+      headerRange.setValue(headerLabel);
+    }
+  }
 }
 
 function styleSchedule_(sched, activityCount, timelineLength) {
