@@ -337,7 +337,7 @@ function renderTensHeaders_(sched, timeline) {
 
   for (let startDay = 1; startDay <= timeline.length; startDay += 10) {
     const endDay = Math.min(startDay + 9, timeline.length);
-    const headerLabel = endDay - startDay + 1 === 10 ? endDay : '';
+    const headerLabel = endDay;
     const headerRange = sched.getRange(SCHED_TIMELINE_TENS_ROW, GANTT_FIRST_COLUMN + startDay - 1, 1, endDay - startDay + 1);
 
     if (endDay > startDay) {
@@ -356,6 +356,8 @@ function styleSchedule_(sched, activityCount, timelineLength) {
 
   tableRange.setBorder(true, true, true, true, true, true, '#000000', SpreadsheetApp.BorderStyle.SOLID);
   timelineRange.setBorder(true, true, true, true, true, true, '#000000', SpreadsheetApp.BorderStyle.SOLID);
+  sched.getRange(SCHED_FIRST_DATA_ROW, GANTT_FIRST_COLUMN, activityCount, timelineLength)
+    .setBorder(true, true, true, true, true, true, '#000000', SpreadsheetApp.BorderStyle.SOLID);
   sched.getRange(SCHED_HEADER_ROW, 1, 1, 8).setBackground('#ffffff');
   sched.getRange(SCHED_FIRST_DATA_ROW, 1, activityCount, 8).setBackground('#ffffff');
 }
