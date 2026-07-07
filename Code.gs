@@ -421,7 +421,7 @@ function renderPertDiagram_(pert, schedule) {
   breakApartOverlappingMergedRanges_(pertDescriptionRange);
   pertDescriptionRange
     .mergeAcross()
-    .setValue('Each node shows ES, Duration, EF on top; Activity in the middle; and LS, Slack, LF on the bottom. Successor links use blue directional arrows.')
+    .setValue('Each node shows ES, Duration, EF on top; Activity in the middle; and LS, Slack, LF on the bottom. Successor links use thin black directional arrows.')
     .setHorizontalAlignment('center');
 
   schedule.forEach(activity => {
@@ -518,22 +518,27 @@ function renderPertArrows_(pert, schedule, layout) {
       const connectorRange = pert.getRange(connectorRow, connectorColumn, 1, connectorWidth);
 
       breakApartOverlappingMergedRanges_(connectorRange);
-      if (connectorWidth > 1) connectorRange.mergeAcross();
       connectorRange
-        .setValue(arrow)
+        .setValues([buildPertArrowCells_(connectorWidth, arrow)])
         .setVerticalAlignment('middle')
         .setHorizontalAlignment('center')
-        .setFontColor('#4285F4')
-        .setFontSize(20)
-        .setFontWeight('bold');
+        .setFontColor('#000000')
+        .setFontSize(14)
+        .setFontWeight('normal');
     });
   });
 }
 
+function buildPertArrowCells_(connectorWidth, arrowHead) {
+  return Array.from({ length: connectorWidth }, (_, index) => {
+    return index === connectorWidth - 1 ? arrowHead : '─';
+  });
+}
+
 function getPertArrowSymbol_(rowDelta) {
-  if (rowDelta < 0) return '━━━━━━━↗';
-  if (rowDelta > 0) return '━━━━━━━↘';
-  return '━━━━━━━▶';
+  if (rowDelta < 0) return '↗';
+  if (rowDelta > 0) return '↘';
+  return '→';
 }
 
 function renderPertLegend_(pert, rowsNeeded, columnsNeeded) {
