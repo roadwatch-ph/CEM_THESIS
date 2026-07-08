@@ -40,6 +40,8 @@ const PERT_ARROW_IMAGE_ALT_TEXT = 'Generated PERT dependency arrow';
 const PERT_CELL_WIDTH_PX = 80;
 const PERT_CELL_HEIGHT_PX = 28;
 const PERT_ARROW_IMAGE_PADDING_PX = 18;
+const PERT_MAX_ARROW_IMAGE_PIXELS = 900000;
+const PERT_MAX_ARROW_IMAGE_BYTES = 1800000;
 const PERT_MAX_LEVELS_PER_ROW_BAND = 120;
 const PERT_ROW_BAND_SPACING = 4;
 const PERT_MAX_DIRECT_ARROW_RENDER_CELLS = 200000;
@@ -774,6 +776,8 @@ function renderPertNode_(pert, row, col, activity) {
 function renderPertArrows_(pert, schedule, layout, rowsNeeded, columnsNeeded) {
   const activityById = new Map(schedule.map(activity => [activity.id, activity]));
   const incomingRouteIndexByTarget = new Map();
+  let fallbackArrowGrid = null;
+  let occupiedNodeCells = null;
 
   schedule.forEach(activity => {
     activity.predecessors.forEach((predecessorId, predecessorIndex) => {
@@ -795,9 +799,20 @@ function renderPertArrows_(pert, schedule, layout, rowsNeeded, columnsNeeded) {
 
       const incomingIndex = incomingRouteIndexByTarget.get(successorId).get(activity.id) || 0;
       const incomingCount = Math.max(1, successor.predecessors.length);
-      renderPertImageArrow_(pert, sourcePosition, targetPosition, successorIndex, Math.max(1, activity.successors.length), incomingIndex, incomingCount);
+      const wasRenderedAsImage = renderPertImageArrow_(pert, sourcePosition, targetPosition, successorIndex, Math.max(1, activity.successors.length), incomingIndex, incomingCount);
+      if (!wasRenderedAsImage) {
+        if (!fallbackArrowGrid) {
+          fallbackArrowGrid = createPertArrowGrid_(rowsNeeded, columnsNeeded);
+          occupiedNodeCells = createPertOccupiedNodeCellSet_(layout.positions);
+        }
+        drawPertSmartArrow_(fallbackArrowGrid, sourcePosition, targetPosition, successorIndex, incomingIndex, incomingCount, occupiedNodeCells);
+      }
     });
   });
+
+  if (fallbackArrowGrid) {
+    renderPertArrowGrid_(pert, fallbackArrowGrid, rowsNeeded, columnsNeeded);
+  }
 }
 
 
@@ -836,7 +851,7 @@ function renderPertArrowGridInChunks_(pert, arrowGrid, rowsNeeded, columnsNeeded
 function renderPertImageArrow_(pert, sourcePosition, targetPosition, successorIndex, successorCount, incomingIndex, incomingCount) {
   const startPoint = getPertArrowPixelStartPoint_(sourcePosition, successorIndex, successorCount);
   const endPoint = getPertArrowPixelEndPoint_(targetPosition, incomingIndex, incomingCount);
-  if (endPoint.x <= startPoint.x) return;
+  if (endPoint.x <= startPoint.x) return false;
 
   const minX = Math.min(startPoint.x, endPoint.x) - PERT_ARROW_IMAGE_PADDING_PX;
   const minY = Math.min(startPoint.y, endPoint.y) - PERT_ARROW_IMAGE_PADDING_PX;
@@ -844,6 +859,7 @@ function renderPertImageArrow_(pert, sourcePosition, targetPosition, successorIn
   const maxY = Math.max(startPoint.y, endPoint.y) + PERT_ARROW_IMAGE_PADDING_PX;
   const imageWidth = Math.max(1, Math.ceil(maxX - minX));
   const imageHeight = Math.max(1, Math.ceil(maxY - minY));
+  if (!canRenderPertArrowImage_(imageWidth, imageHeight)) return false;
   const svgStartX = startPoint.x - minX;
   const svgStartY = startPoint.y - minY;
   const svgEndX = endPoint.x - minX;
@@ -858,6 +874,13 @@ function renderPertImageArrow_(pert, sourcePosition, targetPosition, successorIn
     .setAltTextTitle(PERT_ARROW_IMAGE_ALT_TEXT)
     .setWidth(imageWidth)
     .setHeight(imageHeight);
+  return true;
+}
+
+function canRenderPertArrowImage_(width, height) {
+  const pixelCount = width * height;
+  const estimatedPngBytes = 33 + 12 * 3 + 6 + height * (1 + width * 4);
+  return pixelCount <= PERT_MAX_ARROW_IMAGE_PIXELS && estimatedPngBytes <= PERT_MAX_ARROW_IMAGE_BYTES;
 }
 
 function createPertArrowPngBlob_(width, height, startX, startY, endX, endY) {
