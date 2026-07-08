@@ -50,6 +50,7 @@ const PERT_MIN_CONNECTED_NODE_ROW_DELTA = 2;
 const PERT_MAX_DIRECT_ARROW_RENDER_CELLS = 200000;
 const PERT_MAX_IMAGE_ARROW_COUNT = 200;
 const PERT_IMAGE_ARROW_MAX_NODE_COUNT = 250;
+const PERT_USE_IMAGE_ARROWS = false;
 const DEFAULT_WBS_SHEET_NAME = 'WBS';
 const DEFAULT_SCHED_SHEET_NAME = 'Scheduling';
 const DEFAULT_PERT_SHEET_NAME = 'PERT Diagram';
@@ -129,11 +130,10 @@ function generateScheduleForWbsSheet_(ss, wbs) {
     return;
   }
 
-  const orderedActivities = topologicalSort_(activities);
-  const schedule = computeSchedule_(orderedActivities);
+  const scheduleModel = buildScheduleModel_(activities);
 
-  renderSchedule_(sched, schedule);
-  renderPertDiagram_(pert, schedule);
+  renderSchedule_(sched, scheduleModel.schedule);
+  renderPertDiagram_(pert, scheduleModel.schedule);
 }
 
 function getWbsSheets_(ss) {
@@ -325,6 +325,14 @@ function parseAndValidateWbs_(rows, wbsSheetName) {
   return activities;
 }
 
+function buildScheduleModel_(activities) {
+  const orderedActivities = topologicalSort_(activities);
+  return {
+    orderedActivities,
+    schedule: computeSchedule_(orderedActivities),
+  };
+}
+
 function topologicalSort_(activities) {
   const byId = new Map(activities.map(activity => [activity.id, activity]));
   const inDegreeById = new Map(activities.map(activity => [activity.id, activity.predecessors.length]));
@@ -480,6 +488,8 @@ function renderSchedule_(sched, schedule) {
   ensureSheetSize_(sched, SCHED_FIRST_DATA_ROW + output.length - 1, timeline.length + GANTT_FIRST_COLUMN - 1);
   trimExtraScheduleColumns_(sched, timeline.length + GANTT_FIRST_COLUMN - 1);
 
+  renderScheduleTitle_(sched);
+
   const tableHeaderRange = sched.getRange(SCHED_HEADER_ROW, 1, 1, 8);
   tableHeaderRange.setValues([['Activity', 'Activity Description', 'Predecessor', 'Duration', 'Early Start', 'Early Finish', 'Late Start', 'Late Finish']]);
   sched.getRange(SCHED_FIRST_DATA_ROW, 1, output.length, 8).setValues(output);
@@ -546,7 +556,7 @@ function renderPertDiagram_(pert, schedule) {
   breakApartOverlappingMergedRanges_(pertDescriptionRange);
   pertDescriptionRange
     .mergeAcross()
-    .setValue('Each node shows ES, Duration, EF on top; Activity in the middle; and LS, Slack, LF on the bottom. Successor links use clean diagonal PNG arrows with separate entry points for multiple predecessors.')
+    .setValue('Each node shows ES, Duration, EF on top; Activity in the middle; and LS, Slack, LF on the bottom. Arrows are rendered as spreadsheet-safe connectors with separate entry points for multiple predecessors.')
     .setHorizontalAlignment('center')
     .setWrap(true)
     .setBackground('#ddebf7');
@@ -911,7 +921,9 @@ function buildPertArrowRoutes_(schedule, layout) {
 }
 
 function shouldRenderPertImageArrows_(schedule, arrowRoutes) {
-  return schedule.length <= PERT_IMAGE_ARROW_MAX_NODE_COUNT && arrowRoutes.length <= PERT_MAX_IMAGE_ARROW_COUNT;
+  return PERT_USE_IMAGE_ARROWS &&
+    schedule.length <= PERT_IMAGE_ARROW_MAX_NODE_COUNT &&
+    arrowRoutes.length <= PERT_MAX_IMAGE_ARROW_COUNT;
 }
 
 
@@ -1610,6 +1622,21 @@ function resizePertCells_(pert, rowsNeeded, columnsNeeded) {
   pert.setRowHeights(1, rowsNeeded, PERT_CELL_HEIGHT_PX);
 }
 
+
+function renderScheduleTitle_(sched) {
+  const titleRange = sched.getRange(SCHED_TITLE_ROW, 1, 1, GANTT_FIRST_COLUMN - 1);
+  breakApartOverlappingMergedRanges_(titleRange);
+  titleRange
+    .mergeAcross()
+    .setValue('PROJECT SCHEDULING')
+    .setFontWeight('bold')
+    .setFontSize(14)
+    .setHorizontalAlignment('center')
+    .setVerticalAlignment('middle')
+    .setBackground('#1f4e79')
+    .setFontColor('#ffffff');
+}
+
 function renderTimelineHeaders_(sched, timeline) {
   const timelineLabelRange = sched.getRange(SCHED_TIMELINE_LABEL_ROW, GANTT_FIRST_COLUMN, 1, timeline.length);
   breakApartOverlappingMergedRanges_(timelineLabelRange);
@@ -1775,6 +1802,8 @@ function removeGeneratedPertArrowImages_(pert) {
 
 function clearSchedule_(sched) {
   clearSheet_(sched);
+  trimExtraRows_(sched, 50);
+  trimExtraScheduleColumns_(sched, 26);
 }
 
 
