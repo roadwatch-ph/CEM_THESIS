@@ -774,6 +774,9 @@ function renderPertNode_(pert, row, col, activity) {
 function renderPertArrows_(pert, schedule, layout, rowsNeeded, columnsNeeded) {
   const activityById = new Map(schedule.map(activity => [activity.id, activity]));
   const incomingRouteIndexByTarget = new Map();
+  // Use cell-based connectors instead of inserted SVG blobs because Sheets does not
+  // consistently accept SVG image blobs and can throw "The blob format is unsupported."
+  const arrowGrid = createPertArrowGrid_(rowsNeeded, columnsNeeded);
 
   schedule.forEach(activity => {
     activity.predecessors.forEach((predecessorId, predecessorIndex) => {
@@ -788,16 +791,18 @@ function renderPertArrows_(pert, schedule, layout, rowsNeeded, columnsNeeded) {
     const sourcePosition = layout.positions.get(activity.id);
     if (!sourcePosition) return;
 
-    activity.successors.forEach(successorId => {
+    activity.successors.forEach((successorId, successorIndex) => {
       const successor = activityById.get(successorId);
       const targetPosition = layout.positions.get(successorId);
       if (!successor || !targetPosition) return;
 
       const incomingIndex = incomingRouteIndexByTarget.get(successorId).get(activity.id) || 0;
       const incomingCount = Math.max(1, successor.predecessors.length);
-      renderPertImageArrow_(pert, sourcePosition, targetPosition, incomingIndex, incomingCount);
+      drawPertSmartArrow_(arrowGrid, sourcePosition, targetPosition, successorIndex, incomingIndex, incomingCount);
     });
   });
+
+  renderPertArrowGrid_(pert, arrowGrid, rowsNeeded, columnsNeeded);
 }
 
 
