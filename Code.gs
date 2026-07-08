@@ -26,14 +26,16 @@ const SCHED_TIMELINE_DAYS_ROW = 3;
 const SCHED_FIRST_DATA_ROW = 4;
 const GANTT_FIRST_COLUMN = 9;
 const GANTT_CELL_SIZE_PX = 20;
-const PERT_NODE_ROW_SPACING = 5;
-const PERT_NODE_COLUMN_SPACING = 7;
+const PERT_NODE_ROW_SPACING = 7;
+const PERT_NODE_COLUMN_SPACING = 10;
 const PERT_NODE_HEIGHT = 3;
 const PERT_NODE_WIDTH = 3;
 const PERT_ARROW_COLOR = '#000000';
 const PERT_ARROW_FONT_SIZE = 16;
-const PERT_ARROW_START_PADDING = 1;
-const PERT_ARROW_END_PADDING = 1;
+const PERT_ARROW_START_PADDING = 2;
+const PERT_ARROW_END_PADDING = 2;
+const PERT_FIRST_NODE_ROW = 4;
+const PERT_FIRST_NODE_COLUMN = 1;
 const PERT_ARROW_IMAGE_ALT_TEXT = 'Generated PERT dependency arrow';
 const PERT_CELL_WIDTH_PX = 80;
 const PERT_CELL_HEIGHT_PX = 28;
@@ -450,6 +452,7 @@ function renderSchedule_(sched, schedule) {
 
 function renderPertDiagram_(pert, schedule) {
   pert.setFrozenRows(0);
+  pert.setHiddenGridlines(true);
 
   if (schedule.length === 0) {
     clearPertDiagram_(pert);
@@ -458,8 +461,8 @@ function renderPertDiagram_(pert, schedule) {
 
   const pertActivities = addPertMilestones_(schedule);
   const layout = buildPertLayout_(pertActivities);
-  const rowsNeeded = Math.max(8, 4 + layout.maxLane * PERT_NODE_ROW_SPACING + 4);
-  const columnsNeeded = Math.max(10, 1 + (layout.maxLevel + 1) * PERT_NODE_COLUMN_SPACING);
+  const rowsNeeded = Math.max(10, layout.maxNodeRow + PERT_NODE_HEIGHT + 3);
+  const columnsNeeded = Math.max(12, PERT_FIRST_NODE_COLUMN + (layout.maxLevel + 1) * PERT_NODE_COLUMN_SPACING);
   preparePertDiagramSheet_(pert, rowsNeeded, columnsNeeded);
   resizePertCells_(pert, rowsNeeded, columnsNeeded);
 
@@ -472,13 +475,17 @@ function renderPertDiagram_(pert, schedule) {
     .setValue('PERT DIAGRAM')
     .setFontWeight('bold')
     .setFontSize(14)
-    .setHorizontalAlignment('center');
+    .setHorizontalAlignment('center')
+    .setBackground('#1f4e79')
+    .setFontColor('#ffffff');
   const pertDescriptionRange = pert.getRange(2, 1, 1, columnsNeeded);
   breakApartOverlappingMergedRanges_(pertDescriptionRange);
   pertDescriptionRange
     .mergeAcross()
     .setValue('Each node shows ES, Duration, EF on top; Activity in the middle; and LS, Slack, LF on the bottom. Successor links use black directional arrows that point into the next activity node.')
-    .setHorizontalAlignment('center');
+    .setHorizontalAlignment('center')
+    .setWrap(true)
+    .setBackground('#ddebf7');
 
   pertActivities.forEach(activity => {
     const position = layout.positions.get(activity.id);
@@ -579,13 +586,34 @@ function buildPertLayout_(schedule) {
   let maxLane = 0;
   for (let level = 0; level <= maxLevel; level++) {
     const activities = activitiesByLevel.get(level) || [];
+    const levelTopOffsetRows = getCenteredPertLevelOffsetRows_(activities.length, activitiesByLevel);
     activities.forEach((activity, lane) => {
-      positions.set(activity.id, { level, lane });
-      maxLane = Math.max(maxLane, lane);
+      const rowOffset = levelTopOffsetRows + lane * PERT_NODE_ROW_SPACING;
+      positions.set(activity.id, { level, lane, rowOffset });
+      maxLane = Math.max(maxLane, Math.ceil(rowOffset / PERT_NODE_ROW_SPACING));
     });
   }
 
-  return { positions, maxLane, maxLevel };
+  return {
+    positions,
+    maxLane,
+    maxLevel,
+    maxNodeRow: getMaxPertNodeRow_(positions),
+  };
+}
+
+function getCenteredPertLevelOffsetRows_(activityCount, activitiesByLevel) {
+  const maxLevelActivityCount = Math.max(...Array.from(activitiesByLevel.values()).map(activities => activities.length));
+  const emptyLaneCount = Math.max(0, maxLevelActivityCount - activityCount);
+  return Math.floor(emptyLaneCount * PERT_NODE_ROW_SPACING / 2);
+}
+
+function getMaxPertNodeRow_(positions) {
+  let maxNodeRow = PERT_FIRST_NODE_ROW;
+  positions.forEach(position => {
+    maxNodeRow = Math.max(maxNodeRow, getPertNodeRow_(position));
+  });
+  return maxNodeRow;
 }
 
 function createPertLaneMap_(activitiesByLevel, maxLevel) {
@@ -623,8 +651,9 @@ function comparePertActivitiesBySourceOrder_(a, b) {
 
 function renderPertNode_(pert, row, col, activity) {
   const nodeRange = pert.getRange(row, col, 3, 3);
-  const background = activity.isPertMilestone ? '#eaf2f8' : '#ffffff';
+  const background = activity.isPertMilestone ? '#eaf2f8' : activity.isCritical ? '#fce4d6' : '#ffffff';
   const fontColor = activity.isPertMilestone ? '#1f4e79' : '#000000';
+  const borderColor = activity.isCritical ? '#c00000' : '#000000';
   breakApartOverlappingMergedRanges_(nodeRange);
   nodeRange
     .setValues([
@@ -637,7 +666,7 @@ function renderPertNode_(pert, row, col, activity) {
     .setHorizontalAlignment('center')
     .setBackground(background)
     .setFontColor(fontColor)
-    .setBorder(true, true, true, true, true, true, '#000000', SpreadsheetApp.BorderStyle.SOLID);
+    .setBorder(true, true, true, true, true, true, borderColor, SpreadsheetApp.BorderStyle.SOLID);
 
   const activityRange = pert.getRange(row + 1, col, 1, 3);
   breakApartOverlappingMergedRanges_(activityRange);
@@ -649,7 +678,7 @@ function renderPertNode_(pert, row, col, activity) {
     .setHorizontalAlignment('center')
     .setBackground(background)
     .setFontColor(fontColor)
-    .setBorder(true, true, true, true, null, null, '#000000', SpreadsheetApp.BorderStyle.SOLID);
+    .setBorder(true, true, true, true, null, null, borderColor, SpreadsheetApp.BorderStyle.SOLID);
 }
 
 
@@ -756,17 +785,10 @@ function drawPertSmartArrow_(arrowGrid, sourcePosition, targetPosition, successo
 
   if (endPoint.col < startPoint.col) return;
 
-  const horizontalClearance = endPoint.col - startPoint.col;
   const verticalDelta = endPoint.row - startPoint.row;
 
   if (verticalDelta === 0) {
     drawPertHorizontalArrowLine_(arrowGrid, startPoint.row, startPoint.col, endPoint.col);
-    return;
-  }
-
-  const canDrawCleanDiagonal = Math.abs(verticalDelta) <= horizontalClearance && horizontalClearance <= PERT_NODE_COLUMN_SPACING;
-  if (canDrawCleanDiagonal) {
-    drawPertDiagonalArrow_(arrowGrid, startPoint, endPoint);
     return;
   }
 
@@ -783,18 +805,11 @@ function renderPertSmartArrow_(pert, sourcePosition, targetPosition, successorIn
 
   if (endPoint.col < startPoint.col) return;
 
-  const horizontalClearance = endPoint.col - startPoint.col;
   const verticalDelta = endPoint.row - startPoint.row;
 
   if (verticalDelta === 0) {
     renderPertHorizontalArrowLine_(pert, startPoint.row, startPoint.col, endPoint.col);
     renderPertArrowHead_(pert, endPoint.row, endPoint.col, '➜');
-    return;
-  }
-
-  const canDrawCleanDiagonal = Math.abs(verticalDelta) <= horizontalClearance && horizontalClearance <= PERT_NODE_COLUMN_SPACING;
-  if (canDrawCleanDiagonal) {
-    renderPertDiagonalArrow_(pert, startPoint, endPoint);
     return;
   }
 
@@ -828,10 +843,7 @@ function getPertIncomingArrowRow_(targetRow, incomingIndex, incomingCount) {
 }
 
 function renderPertOrthogonalSmartArrow_(pert, startPoint, endPoint, successorIndex, incomingIndex) {
-  const startSpacerCol = startPoint.col + PERT_ARROW_START_PADDING;
-  const endSpacerCol = endPoint.col - PERT_ARROW_END_PADDING;
-  const routeWidth = Math.max(1, endSpacerCol - startSpacerCol + 1);
-  const bendCol = Math.min(endSpacerCol, startSpacerCol + ((successorIndex + incomingIndex) % routeWidth));
+  const bendCol = getPertOrthogonalBendColumn_(startPoint, endPoint, successorIndex, incomingIndex);
 
   renderPertHorizontalConnector_(pert, startPoint.row, startPoint.col, bendCol);
   renderPertVerticalConnector_(pert, bendCol, startPoint.row, endPoint.row);
@@ -840,14 +852,21 @@ function renderPertOrthogonalSmartArrow_(pert, startPoint, endPoint, successorIn
 }
 
 function drawPertOrthogonalSmartArrow_(arrowGrid, startPoint, endPoint, successorIndex, incomingIndex) {
-  const startSpacerCol = startPoint.col + PERT_ARROW_START_PADDING;
-  const endSpacerCol = endPoint.col - PERT_ARROW_END_PADDING;
-  const routeWidth = Math.max(1, endSpacerCol - startSpacerCol + 1);
-  const bendCol = Math.min(endSpacerCol, startSpacerCol + ((successorIndex + incomingIndex) % routeWidth));
+  const bendCol = getPertOrthogonalBendColumn_(startPoint, endPoint, successorIndex, incomingIndex);
 
   drawPertHorizontalConnector_(arrowGrid, startPoint.row, startPoint.col, bendCol);
   drawPertVerticalConnector_(arrowGrid, bendCol, startPoint.row, endPoint.row);
   drawPertHorizontalArrowLine_(arrowGrid, endPoint.row, bendCol, endPoint.col);
+}
+
+function getPertOrthogonalBendColumn_(startPoint, endPoint, successorIndex, incomingIndex) {
+  const startSpacerCol = startPoint.col + PERT_ARROW_START_PADDING;
+  const endSpacerCol = endPoint.col - PERT_ARROW_END_PADDING;
+  const centerCol = Math.floor((startSpacerCol + endSpacerCol) / 2);
+  const routeOffset = successorIndex - incomingIndex;
+  const bendCol = centerCol + Math.max(-2, Math.min(2, routeOffset));
+
+  return Math.max(startSpacerCol, Math.min(endSpacerCol, bendCol));
 }
 
 function renderPertDiagonalArrow_(pert, startPoint, endPoint) {
@@ -906,11 +925,11 @@ function drawPertDiagonalArrow_(arrowGrid, startPoint, endPoint) {
 }
 
 function getPertNodeRow_(position) {
-  return 4 + position.lane * PERT_NODE_ROW_SPACING;
+  return PERT_FIRST_NODE_ROW + position.rowOffset;
 }
 
 function getPertNodeColumn_(position) {
-  return 1 + position.level * PERT_NODE_COLUMN_SPACING;
+  return PERT_FIRST_NODE_COLUMN + position.level * PERT_NODE_COLUMN_SPACING;
 }
 
 function renderPertHorizontalArrowLine_(pert, row, startCol, arrowHeadCol) {
@@ -1014,13 +1033,13 @@ function renderPertLegend_(pert, rowsNeeded, columnsNeeded) {
   breakApartOverlappingMergedRanges_(legendDescriptionRange);
   legendDescriptionRange
     .mergeAcross()
-    .setValue('Top: ES | Duration | EF; Middle: Activity; Bottom: LS | Slack | LF; Blue nodes: START/FINISH milestones')
+    .setValue('Top: ES | Duration | EF; Middle: Activity; Bottom: LS | Slack | LF; Blue nodes: START/FINISH milestones; Light orange/red border: critical path')
     .setWrap(true);
 }
 
 function resizePertCells_(pert, rowsNeeded, columnsNeeded) {
-  pert.setColumnWidths(1, columnsNeeded, 80);
-  pert.setRowHeights(1, rowsNeeded, 28);
+  pert.setColumnWidths(1, columnsNeeded, PERT_CELL_WIDTH_PX);
+  pert.setRowHeights(1, rowsNeeded, PERT_CELL_HEIGHT_PX);
 }
 
 function renderTimelineHeaders_(sched, timeline) {
