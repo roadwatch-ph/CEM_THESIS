@@ -565,7 +565,7 @@ function renderPertArrows_(pert, schedule, layout) {
 
       const incomingIndex = incomingRouteIndexByTarget.get(successorId).get(activity.id) || 0;
       const incomingCount = Math.max(1, successor.predecessors.length);
-      renderPertImageArrow_(pert, sourcePosition, targetPosition, incomingIndex, incomingCount);
+      renderPertSmartArrow_(pert, sourcePosition, targetPosition, successorIndex, incomingIndex, incomingCount);
     });
   });
 }
