@@ -26,8 +26,8 @@ const SCHED_TIMELINE_DAYS_ROW = 3;
 const SCHED_FIRST_DATA_ROW = 4;
 const GANTT_FIRST_COLUMN = 9;
 const GANTT_CELL_SIZE_PX = 20;
-const PERT_NODE_ROW_SPACING = 7;
-const PERT_NODE_COLUMN_SPACING = 10;
+const PERT_NODE_ROW_SPACING = 8;
+const PERT_NODE_COLUMN_SPACING = 12;
 const PERT_NODE_HEIGHT = 3;
 const PERT_NODE_WIDTH = 3;
 const PERT_ARROW_COLOR = '#000000';
@@ -39,7 +39,7 @@ const PERT_FIRST_NODE_COLUMN = 1;
 const PERT_ARROW_IMAGE_ALT_TEXT = 'Generated PERT dependency arrow';
 const PERT_CELL_WIDTH_PX = 80;
 const PERT_CELL_HEIGHT_PX = 28;
-const PERT_ARROW_IMAGE_PADDING_PX = 8;
+const PERT_ARROW_IMAGE_PADDING_PX = 18;
 const PERT_MAX_LEVELS_PER_ROW_BAND = 120;
 const PERT_ROW_BAND_SPACING = 4;
 const PERT_MAX_DIRECT_ARROW_RENDER_CELLS = 200000;
@@ -539,7 +539,7 @@ function renderPertDiagram_(pert, schedule) {
   breakApartOverlappingMergedRanges_(pertDescriptionRange);
   pertDescriptionRange
     .mergeAcross()
-    .setValue('Each node shows ES, Duration, EF on top; Activity in the middle; and LS, Slack, LF on the bottom. Successor links use black directional arrows that point into the next activity node.')
+    .setValue('Each node shows ES, Duration, EF on top; Activity in the middle; and LS, Slack, LF on the bottom. Successor links use clean black arrow images that point directly into the next activity node.')
     .setHorizontalAlignment('center')
     .setWrap(true)
     .setBackground('#ddebf7');
@@ -784,24 +784,20 @@ function renderPertArrows_(pert, schedule, layout, rowsNeeded, columnsNeeded) {
     });
   });
 
-  const arrowGrid = createPertArrowGrid_(rowsNeeded, columnsNeeded);
-
   schedule.forEach(activity => {
     const sourcePosition = layout.positions.get(activity.id);
     if (!sourcePosition) return;
 
-    activity.successors.forEach((successorId, successorIndex) => {
+    activity.successors.forEach(successorId => {
       const successor = activityById.get(successorId);
       const targetPosition = layout.positions.get(successorId);
       if (!successor || !targetPosition) return;
 
       const incomingIndex = incomingRouteIndexByTarget.get(successorId).get(activity.id) || 0;
       const incomingCount = Math.max(1, successor.predecessors.length);
-      drawPertSmartArrow_(arrowGrid, sourcePosition, targetPosition, successorIndex, incomingIndex, incomingCount);
+      renderPertImageArrow_(pert, sourcePosition, targetPosition, incomingIndex, incomingCount);
     });
   });
-
-  renderPertArrowGrid_(pert, arrowGrid, rowsNeeded, columnsNeeded);
 }
 
 
@@ -888,11 +884,11 @@ function createPertArrowSvg_(width, height, startX, startY, endX, endY) {
   return [
     `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">`,
     '<defs>',
-    `<marker id="arrowhead" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto" markerUnits="strokeWidth">`,
-    `<path d="M 0 0 L 10 5 L 0 10 z" fill="${PERT_ARROW_COLOR}"/>`,
+    `<marker id="arrowhead" markerWidth="12" markerHeight="12" refX="11" refY="6" orient="auto" markerUnits="strokeWidth">`,
+    `<path d="M 0 0 L 12 6 L 0 12 z" fill="${PERT_ARROW_COLOR}"/>`,
     '</marker>',
     '</defs>',
-    `<line x1="${startX}" y1="${startY}" x2="${endX}" y2="${endY}" stroke="${PERT_ARROW_COLOR}" stroke-width="2" marker-end="url(#arrowhead)" stroke-linecap="round"/>`,
+    `<line x1="${startX}" y1="${startY}" x2="${endX}" y2="${endY}" stroke="${PERT_ARROW_COLOR}" stroke-width="4" marker-end="url(#arrowhead)" stroke-linecap="round"/>`,
     '</svg>',
   ].join('');
 }
