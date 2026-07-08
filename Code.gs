@@ -72,8 +72,24 @@ function generateSchedule() {
   }
 }
 
-function autoGenerateSchedule() {
-  generateScheduleForSpreadsheet_(SpreadsheetApp.getActiveSpreadsheet(), { skipIfBusy: true });
+function autoGenerateSchedule(e) {
+  const ss = e && e.source ? e.source : SpreadsheetApp.getActiveSpreadsheet();
+
+  if (shouldAutoGenerateOnlyActiveWbs_(e)) {
+    const activeSheet = ss.getActiveSheet();
+
+    if (activeSheet && isWbsSheetName_(activeSheet.getName())) {
+      generateScheduleForWbsSheetWithLock_(ss, activeSheet, { skipIfBusy: true });
+    }
+
+    return;
+  }
+
+  generateScheduleForSpreadsheet_(ss, { skipIfBusy: true });
+}
+
+function shouldAutoGenerateOnlyActiveWbs_(e) {
+  return e && e.changeType === 'EDIT';
 }
 
 function generateScheduleForSpreadsheet_(ss, options) {
@@ -1814,10 +1830,20 @@ function addPertDiagramMenu_() {
 function onEdit(e) {
   if (!e || !e.range) return;
 
-  const editedSheet = e.range.getSheet();
-  if (!isWbsSheetName_(editedSheet.getName())) return;
+  const editedRange = e.range;
+  const editedSheet = editedRange.getSheet();
+  if (!isWbsSheetName_(editedSheet.getName()) || !isWbsActivityDataEdit_(editedRange)) return;
 
   generateScheduleForWbsSheetWithLock_(e.source || SpreadsheetApp.getActiveSpreadsheet(), editedSheet, { skipIfBusy: true });
+}
+
+function isWbsActivityDataEdit_(range) {
+  const firstEditedRow = range.getRow();
+  const lastEditedRow = firstEditedRow + range.getNumRows() - 1;
+  const firstEditedColumn = range.getColumn();
+  const lastEditedColumn = firstEditedColumn + range.getNumColumns() - 1;
+
+  return lastEditedRow >= 2 && firstEditedColumn <= 4 && lastEditedColumn >= 1;
 }
 
 /**
