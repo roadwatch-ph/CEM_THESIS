@@ -26,9 +26,9 @@ const SCHED_TIMELINE_DAYS_ROW = 3;
 const SCHED_FIRST_DATA_ROW = 4;
 const GANTT_FIRST_COLUMN = 9;
 const GANTT_CELL_SIZE_PX = 20;
-const PERT_NODE_ROW_SPACING = 8;
+const PERT_NODE_ROW_SPACING = 6;
 const PERT_MIN_TERMINAL_ROW_SPACING = 10;
-const PERT_NODE_COLUMN_SPACING = 14;
+const PERT_NODE_COLUMN_SPACING = 9;
 const PERT_NODE_HEIGHT = 3;
 const PERT_NODE_WIDTH = 3;
 const PERT_ARROW_COLOR = '#000000';
@@ -41,13 +41,13 @@ const PERT_ARROW_IMAGE_ALT_TEXT = 'Generated PERT dependency arrow';
 const PERT_CELL_WIDTH_PX = 80;
 const PERT_CELL_HEIGHT_PX = 28;
 const PERT_ARROW_IMAGE_PADDING_PX = 18;
-const PERT_MAX_ARROW_IMAGE_PIXELS = 900000;
-const PERT_MAX_ARROW_IMAGE_BYTES = 1800000;
+const PERT_MAX_ARROW_IMAGE_PIXELS = 2500000;
+const PERT_MAX_ARROW_IMAGE_BYTES = 12000000;
 const PERT_MAX_LEVELS_PER_ROW_BAND = 120;
 const PERT_ROW_BAND_SPACING = 4;
 const PERT_MAX_DIRECT_ARROW_RENDER_CELLS = 200000;
-const PERT_MAX_IMAGE_ARROW_COUNT = 40;
-const PERT_IMAGE_ARROW_MAX_NODE_COUNT = 60;
+const PERT_MAX_IMAGE_ARROW_COUNT = 200;
+const PERT_IMAGE_ARROW_MAX_NODE_COUNT = 250;
 const DEFAULT_WBS_SHEET_NAME = 'WBS';
 const DEFAULT_SCHED_SHEET_NAME = 'Scheduling';
 const DEFAULT_PERT_SHEET_NAME = 'PERT Diagram';
@@ -1314,7 +1314,7 @@ function drawPertOrthogonalSmartArrow_(arrowGrid, startPoint, endPoint, successo
   drawPertVerticalConnector_(arrowGrid, bendCol, startPoint.row, routeRow);
   drawPertHorizontalConnector_(arrowGrid, routeRow, bendCol, endPoint.col);
   drawPertVerticalConnector_(arrowGrid, endPoint.col, routeRow, endPoint.row);
-  setPertArrowGlyph_(arrowGrid, endPoint.row, endPoint.col, '➜');
+  setPertArrowGlyph_(arrowGrid, endPoint.row, endPoint.col, '▶');
 }
 
 function getPertOrthogonalBendColumn_(startPoint, endPoint, successorIndex, incomingIndex) {
@@ -1447,7 +1447,7 @@ function drawPertHorizontalArrowLine_(arrowGrid, row, startCol, arrowHeadCol) {
     drawPertHorizontalConnector_(arrowGrid, row, startCol, arrowHeadCol - 1);
   }
 
-  setPertArrowGlyph_(arrowGrid, row, arrowHeadCol, '➜');
+  setPertArrowGlyph_(arrowGrid, row, arrowHeadCol, '▶');
 }
 
 function renderPertHorizontalConnector_(pert, row, startCol, endCol) {
@@ -1462,7 +1462,7 @@ function renderPertHorizontalConnector_(pert, row, startCol, endCol) {
 
 function drawPertHorizontalConnector_(arrowGrid, row, startCol, endCol) {
   for (let col = startCol; col <= endCol; col++) {
-    setPertArrowGlyph_(arrowGrid, row, col, '─');
+    setPertArrowGlyph_(arrowGrid, row, col, '━');
   }
 }
 
@@ -1481,7 +1481,7 @@ function drawPertVerticalConnector_(arrowGrid, col, startRow, endRow) {
   const bottomRow = Math.max(startRow, endRow);
 
   for (let row = topRow; row <= bottomRow; row++) {
-    setPertArrowGlyph_(arrowGrid, row, col, '│');
+    setPertArrowGlyph_(arrowGrid, row, col, '┃');
   }
 }
 
@@ -1498,9 +1498,9 @@ function setPertArrowGlyph_(arrowGrid, row, col, glyph) {
 
 function mergePertArrowGlyphs_(existingGlyph, newGlyph) {
   if (!existingGlyph || existingGlyph === newGlyph) return newGlyph;
-  if (existingGlyph === '➜' || existingGlyph === '↗' || existingGlyph === '↘') return existingGlyph;
-  if (newGlyph === '➜' || newGlyph === '↗' || newGlyph === '↘') return newGlyph;
-  if ((existingGlyph === '─' && newGlyph === '│') || (existingGlyph === '│' && newGlyph === '─')) return '┼';
+  if (existingGlyph === '▶' || existingGlyph === '➜' || existingGlyph === '↗' || existingGlyph === '↘') return existingGlyph;
+  if (newGlyph === '▶' || newGlyph === '➜' || newGlyph === '↗' || newGlyph === '↘') return newGlyph;
+  if ((existingGlyph === '━' && newGlyph === '┃') || (existingGlyph === '┃' && newGlyph === '━') || (existingGlyph === '─' && newGlyph === '│') || (existingGlyph === '│' && newGlyph === '─')) return '┼';
   if (existingGlyph === '┼') return existingGlyph;
   return newGlyph;
 }
