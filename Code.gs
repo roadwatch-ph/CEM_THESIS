@@ -46,6 +46,7 @@ const PERT_MAX_ARROW_IMAGE_PIXELS = 2500000;
 const PERT_MAX_ARROW_IMAGE_BYTES = 12000000;
 const PERT_MAX_LEVELS_PER_ROW_BAND = 120;
 const PERT_ROW_BAND_SPACING = 4;
+const PERT_MIN_CONNECTED_NODE_ROW_DELTA = 2;
 const PERT_MAX_DIRECT_ARROW_RENDER_CELLS = 200000;
 const PERT_MAX_IMAGE_ARROW_COUNT = 200;
 const PERT_IMAGE_ARROW_MAX_NODE_COUNT = 250;
@@ -648,6 +649,7 @@ function buildPertLayout_(schedule) {
   }
 
   alignPertFinishMilestoneRow_(schedule, positions);
+  expandPertRowsForArrowClearance_(schedule, positions);
 
   return {
     positions,
@@ -674,6 +676,46 @@ function alignPertFinishMilestoneRow_(schedule, positions) {
 
   const averagePredecessorRow = predecessorRows.reduce((sum, rowOffset) => sum + rowOffset, 0) / predecessorRows.length;
   finishPosition.rowOffset = Math.max(0, Math.round(averagePredecessorRow / PERT_MIN_TERMINAL_ROW_SPACING) * PERT_MIN_TERMINAL_ROW_SPACING);
+}
+
+
+function expandPertRowsForArrowClearance_(schedule, positions) {
+  const activityById = new Map(schedule.map(activity => [activity.id, activity]));
+  let changed = true;
+  let passCount = 0;
+  const maxPasses = Math.max(1, schedule.length * 2);
+
+  while (changed && passCount < maxPasses) {
+    changed = false;
+    passCount++;
+
+    schedule.forEach(activity => {
+      const sourcePosition = positions.get(activity.id);
+      if (!sourcePosition) return;
+
+      activity.successors.forEach(successorId => {
+        const successor = activityById.get(successorId);
+        const targetPosition = positions.get(successorId);
+        if (!successor || !targetPosition) return;
+
+        const rowDelta = targetPosition.rowOffset - sourcePosition.rowOffset;
+        if (rowDelta === 0 || Math.abs(rowDelta) >= PERT_MIN_CONNECTED_NODE_ROW_DELTA) return;
+
+        const rowsToAdd = PERT_MIN_CONNECTED_NODE_ROW_DELTA - Math.abs(rowDelta);
+        const positionToMove = rowDelta > 0 ? targetPosition : sourcePosition;
+        shiftPertPositionAndLaterRows_(positions, positionToMove, rowsToAdd);
+        changed = true;
+      });
+    });
+  }
+}
+
+function shiftPertPositionAndLaterRows_(positions, anchorPosition, rowsToAdd) {
+  positions.forEach(position => {
+    if (position === anchorPosition || position.rowOffset >= anchorPosition.rowOffset) {
+      position.rowOffset += rowsToAdd;
+    }
+  });
 }
 
 function buildPertLevelMap_(schedule) {
