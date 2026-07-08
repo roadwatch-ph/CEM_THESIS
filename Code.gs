@@ -47,6 +47,7 @@ const SCHEDULING_SHEET_ID_PROPERTY_PREFIX = 'schedulingSheetIdForWbs_';
 const PERT_SHEET_ID_PROPERTY_PREFIX = 'pertSheetIdForWbs_';
 const MAX_SHEET_NAME_LENGTH = 100;
 const SCHEDULE_GENERATION_LOCK_TIMEOUT_MS = 25000;
+const SCHEDULE_GENERATION_BUSY_MESSAGE = 'Schedule generation is already running. Please wait a moment, then try again.';
 
 function generateSchedule() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -57,10 +58,10 @@ function generateSchedule() {
 }
 
 function autoGenerateSchedule() {
-  generateScheduleForSpreadsheet_(SpreadsheetApp.getActiveSpreadsheet());
+  generateScheduleForSpreadsheet_(SpreadsheetApp.getActiveSpreadsheet(), { skipIfBusy: true });
 }
 
-function generateScheduleForSpreadsheet_(ss) {
+function generateScheduleForSpreadsheet_(ss, options) {
   return runWithScheduleGenerationLock_(() => {
     const wbsSheets = getWbsSheets_(ss);
 
@@ -68,17 +69,23 @@ function generateScheduleForSpreadsheet_(ss) {
 
     wbsSheets.forEach(wbs => generateScheduleForWbsSheet_(ss, wbs));
     return true;
-  });
+  }, options);
 }
 
-function generateScheduleForWbsSheetWithLock_(ss, wbs) {
-  return runWithScheduleGenerationLock_(() => generateScheduleForWbsSheet_(ss, wbs));
+function generateScheduleForWbsSheetWithLock_(ss, wbs, options) {
+  return runWithScheduleGenerationLock_(() => generateScheduleForWbsSheet_(ss, wbs), options);
 }
 
-function runWithScheduleGenerationLock_(callback) {
+function runWithScheduleGenerationLock_(callback, options) {
   const lock = LockService.getDocumentLock();
-  if (!lock.tryLock(SCHEDULE_GENERATION_LOCK_TIMEOUT_MS)) {
-    throw new Error('Schedule generation is still running. Please wait a moment, then try again.');
+  const shouldSkipIfBusy = options && options.skipIfBusy;
+  const hasLock = shouldSkipIfBusy
+    ? lock.tryLock(1)
+    : lock.tryLock(SCHEDULE_GENERATION_LOCK_TIMEOUT_MS);
+
+  if (!hasLock) {
+    if (shouldSkipIfBusy) return false;
+    throw new Error(SCHEDULE_GENERATION_BUSY_MESSAGE);
   }
 
   try {
@@ -970,7 +977,7 @@ function styleSchedule_(sched, activityCount, timelineLength) {
  */
 function onOpen(e) {
   const ss = e && e.source ? e.source : SpreadsheetApp.getActiveSpreadsheet();
-  generateScheduleForSpreadsheet_(ss);
+  generateScheduleForSpreadsheet_(ss, { skipIfBusy: true });
 }
 
 /**
@@ -985,7 +992,7 @@ function onEdit(e) {
   const editedSheet = e.range.getSheet();
   if (!isWbsSheetName_(editedSheet.getName())) return;
 
-  generateScheduleForWbsSheetWithLock_(e.source || SpreadsheetApp.getActiveSpreadsheet(), editedSheet);
+  generateScheduleForWbsSheetWithLock_(e.source || SpreadsheetApp.getActiveSpreadsheet(), editedSheet, { skipIfBusy: true });
 }
 
 /**
