@@ -42,6 +42,7 @@ const WBS_SHEET_NAME_REPLACEMENT_PATTERN = /WBS/ig;
 const SCHEDULING_SHEET_ID_PROPERTY_PREFIX = 'schedulingSheetIdForWbs_';
 const PERT_SHEET_ID_PROPERTY_PREFIX = 'pertSheetIdForWbs_';
 const MAX_SHEET_NAME_LENGTH = 100;
+const SCHEDULE_GENERATION_LOCK_TIMEOUT_MS = 25000;
 
 function generateSchedule() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -56,12 +57,31 @@ function autoGenerateSchedule() {
 }
 
 function generateScheduleForSpreadsheet_(ss) {
-  const wbsSheets = getWbsSheets_(ss);
+  return runWithScheduleGenerationLock_(() => {
+    const wbsSheets = getWbsSheets_(ss);
 
-  if (wbsSheets.length === 0) return false;
+    if (wbsSheets.length === 0) return false;
 
-  wbsSheets.forEach(wbs => generateScheduleForWbsSheet_(ss, wbs));
-  return true;
+    wbsSheets.forEach(wbs => generateScheduleForWbsSheet_(ss, wbs));
+    return true;
+  });
+}
+
+function generateScheduleForWbsSheetWithLock_(ss, wbs) {
+  return runWithScheduleGenerationLock_(() => generateScheduleForWbsSheet_(ss, wbs));
+}
+
+function runWithScheduleGenerationLock_(callback) {
+  const lock = LockService.getDocumentLock();
+  if (!lock.tryLock(SCHEDULE_GENERATION_LOCK_TIMEOUT_MS)) {
+    throw new Error('Schedule generation is still running. Please wait a moment, then try again.');
+  }
+
+  try {
+    return callback();
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 function generateScheduleForWbsSheet_(ss, wbs) {
@@ -417,15 +437,16 @@ function renderSchedule_(sched, schedule) {
 
 function renderPertDiagram_(pert, schedule) {
   pert.setFrozenRows(0);
-  clearPertDiagram_(pert);
 
-  if (schedule.length === 0) return;
+  if (schedule.length === 0) {
+    clearPertDiagram_(pert);
+    return;
+  }
 
   const layout = buildPertLayout_(schedule);
   const rowsNeeded = Math.max(8, 4 + layout.maxLane * PERT_NODE_ROW_SPACING + 4);
   const columnsNeeded = Math.max(10, 1 + (layout.maxLevel + 1) * PERT_NODE_COLUMN_SPACING);
-  ensureSheetSize_(pert, rowsNeeded, columnsNeeded);
-  trimExtraScheduleColumns_(pert, columnsNeeded);
+  preparePertDiagramSheet_(pert, rowsNeeded, columnsNeeded);
 
   renderPertArrows_(pert, schedule, layout, rowsNeeded, columnsNeeded);
 
@@ -910,7 +931,7 @@ function onEdit(e) {
   const editedSheet = e.range.getSheet();
   if (!isWbsSheetName_(editedSheet.getName())) return;
 
-  generateScheduleForWbsSheet_(e.source || SpreadsheetApp.getActiveSpreadsheet(), editedSheet);
+  generateScheduleForWbsSheetWithLock_(e.source || SpreadsheetApp.getActiveSpreadsheet(), editedSheet);
 }
 
 /**
@@ -949,6 +970,14 @@ function trimExtraScheduleColumns_(sheet, requiredColumns) {
   }
 }
 
+function trimExtraRows_(sheet, requiredRows) {
+  const extraRows = sheet.getMaxRows() - requiredRows;
+
+  if (extraRows > 0) {
+    sheet.deleteRows(requiredRows + 1, extraRows);
+  }
+}
+
 function ensureSheetSize_(sheet, requiredRows, requiredColumns) {
   if (sheet.getMaxRows() < requiredRows) {
     sheet.insertRowsAfter(sheet.getMaxRows(), requiredRows - sheet.getMaxRows());
@@ -959,8 +988,17 @@ function ensureSheetSize_(sheet, requiredRows, requiredColumns) {
   }
 }
 
+function preparePertDiagramSheet_(pert, requiredRows, requiredColumns) {
+  ensureSheetSize_(pert, requiredRows, requiredColumns);
+  clearSheetRange_(pert, requiredRows, requiredColumns);
+  trimExtraRows_(pert, requiredRows);
+  trimExtraScheduleColumns_(pert, requiredColumns);
+}
+
 function clearPertDiagram_(pert) {
-  clearSheet_(pert);
+  clearSheetRange_(pert, Math.min(pert.getMaxRows(), 50), Math.min(pert.getMaxColumns(), 26));
+  trimExtraRows_(pert, 50);
+  trimExtraScheduleColumns_(pert, 26);
 }
 
 function clearSchedule_(sched) {
@@ -979,10 +1017,15 @@ function breakApartOverlappingMergedRanges_(range) {
 }
 
 function clearSheet_(sheet) {
-  const rows = sheet.getMaxRows();
-  const cols = sheet.getMaxColumns();
-  breakApartMergedRanges_(sheet);
-  sheet.getRange(1, 1, rows, cols)
+  clearSheetRange_(sheet, sheet.getMaxRows(), sheet.getMaxColumns());
+}
+
+function clearSheetRange_(sheet, rows, cols) {
+  const boundedRows = Math.max(1, Math.min(rows, sheet.getMaxRows()));
+  const boundedCols = Math.max(1, Math.min(cols, sheet.getMaxColumns()));
+  const range = sheet.getRange(1, 1, boundedRows, boundedCols);
+  breakApartOverlappingMergedRanges_(range);
+  range
     .clearContent()
     .setBackground(null)
     .setFontWeight('normal')
