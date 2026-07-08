@@ -45,6 +45,8 @@ const PERT_MAX_ARROW_IMAGE_BYTES = 1800000;
 const PERT_MAX_LEVELS_PER_ROW_BAND = 120;
 const PERT_ROW_BAND_SPACING = 4;
 const PERT_MAX_DIRECT_ARROW_RENDER_CELLS = 200000;
+const PERT_MAX_IMAGE_ARROW_COUNT = 40;
+const PERT_IMAGE_ARROW_MAX_NODE_COUNT = 60;
 const DEFAULT_WBS_SHEET_NAME = 'WBS';
 const DEFAULT_SCHED_SHEET_NAME = 'Scheduling';
 const DEFAULT_PERT_SHEET_NAME = 'PERT Diagram';
@@ -774,45 +776,78 @@ function renderPertNode_(pert, row, col, activity) {
 
 
 function renderPertArrows_(pert, schedule, layout, rowsNeeded, columnsNeeded) {
+  const arrowRoutes = buildPertArrowRoutes_(schedule, layout);
+  if (arrowRoutes.length === 0) return;
+
+  const shouldUseImageArrows = shouldRenderPertImageArrows_(schedule, arrowRoutes);
+  let fallbackArrowGrid = shouldUseImageArrows ? null : createPertArrowGrid_(rowsNeeded, columnsNeeded);
+  let occupiedNodeCells = fallbackArrowGrid ? createPertOccupiedNodeCellSet_(layout.positions) : null;
+
+  arrowRoutes.forEach(route => {
+    const wasRenderedAsImage = shouldUseImageArrows && renderPertImageArrow_(
+      pert,
+      route.sourcePosition,
+      route.targetPosition,
+      route.successorIndex,
+      route.successorCount,
+      route.incomingIndex,
+      route.incomingCount
+    );
+
+    if (!wasRenderedAsImage) {
+      if (!fallbackArrowGrid) {
+        fallbackArrowGrid = createPertArrowGrid_(rowsNeeded, columnsNeeded);
+        occupiedNodeCells = createPertOccupiedNodeCellSet_(layout.positions);
+      }
+      drawPertSmartArrow_(fallbackArrowGrid, route.sourcePosition, route.targetPosition, route.successorIndex, route.incomingIndex, route.incomingCount, occupiedNodeCells);
+    }
+  });
+
+  if (fallbackArrowGrid) {
+    renderPertArrowGrid_(pert, fallbackArrowGrid, rowsNeeded, columnsNeeded);
+  }
+}
+
+function buildPertArrowRoutes_(schedule, layout) {
   const activityById = new Map(schedule.map(activity => [activity.id, activity]));
   const incomingRouteIndexByTarget = new Map();
-  let fallbackArrowGrid = null;
-  let occupiedNodeCells = null;
+  const arrowRoutes = [];
 
   schedule.forEach(activity => {
+    const routeIndexByPredecessor = new Map();
     activity.predecessors.forEach((predecessorId, predecessorIndex) => {
-      if (!incomingRouteIndexByTarget.has(activity.id)) {
-        incomingRouteIndexByTarget.set(activity.id, new Map());
-      }
-      incomingRouteIndexByTarget.get(activity.id).set(predecessorId, predecessorIndex);
+      routeIndexByPredecessor.set(predecessorId, predecessorIndex);
     });
+    incomingRouteIndexByTarget.set(activity.id, routeIndexByPredecessor);
   });
 
   schedule.forEach(activity => {
     const sourcePosition = layout.positions.get(activity.id);
     if (!sourcePosition) return;
 
+    const successorCount = Math.max(1, activity.successors.length);
     activity.successors.forEach((successorId, successorIndex) => {
       const successor = activityById.get(successorId);
       const targetPosition = layout.positions.get(successorId);
       if (!successor || !targetPosition) return;
 
-      const incomingIndex = incomingRouteIndexByTarget.get(successorId).get(activity.id) || 0;
-      const incomingCount = Math.max(1, successor.predecessors.length);
-      const wasRenderedAsImage = renderPertImageArrow_(pert, sourcePosition, targetPosition, successorIndex, Math.max(1, activity.successors.length), incomingIndex, incomingCount);
-      if (!wasRenderedAsImage) {
-        if (!fallbackArrowGrid) {
-          fallbackArrowGrid = createPertArrowGrid_(rowsNeeded, columnsNeeded);
-          occupiedNodeCells = createPertOccupiedNodeCellSet_(layout.positions);
-        }
-        drawPertSmartArrow_(fallbackArrowGrid, sourcePosition, targetPosition, successorIndex, incomingIndex, incomingCount, occupiedNodeCells);
-      }
+      const incomingIndexByPredecessor = incomingRouteIndexByTarget.get(successorId);
+      arrowRoutes.push({
+        sourcePosition,
+        targetPosition,
+        successorIndex,
+        successorCount,
+        incomingIndex: incomingIndexByPredecessor.get(activity.id) || 0,
+        incomingCount: Math.max(1, successor.predecessors.length),
+      });
     });
   });
 
-  if (fallbackArrowGrid) {
-    renderPertArrowGrid_(pert, fallbackArrowGrid, rowsNeeded, columnsNeeded);
-  }
+  return arrowRoutes;
+}
+
+function shouldRenderPertImageArrows_(schedule, arrowRoutes) {
+  return schedule.length <= PERT_IMAGE_ARROW_MAX_NODE_COUNT && arrowRoutes.length <= PERT_MAX_IMAGE_ARROW_COUNT;
 }
 
 
@@ -892,7 +927,9 @@ function createPertArrowPngBlob_(width, height, startX, startY, endX, endY) {
 }
 
 function createTransparentRgbaBuffer_(width, height) {
-  return Array.from({ length: width * height * 4 }, () => 0);
+  const pixelBytes = width * height * 4;
+  if (typeof Uint8Array !== 'undefined') return new Uint8Array(pixelBytes);
+  return Array.from({ length: pixelBytes }, () => 0);
 }
 
 function drawPertPngLine_(rgba, width, height, startX, startY, endX, endY, thickness) {
