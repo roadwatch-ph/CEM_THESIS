@@ -539,7 +539,7 @@ function renderPertDiagram_(pert, schedule) {
   breakApartOverlappingMergedRanges_(pertDescriptionRange);
   pertDescriptionRange
     .mergeAcross()
-    .setValue('Each node shows ES, Duration, EF on top; Activity in the middle; and LS, Slack, LF on the bottom. Successor links use black cell-based arrow connectors that point into the next activity node.')
+    .setValue('Each node shows ES, Duration, EF on top; Activity in the middle; and LS, Slack, LF on the bottom. Successor links use generated PNG arrow images that point directly into the next activity node.')
     .setHorizontalAlignment('center')
     .setWrap(true)
     .setBackground('#ddebf7');
@@ -853,8 +853,7 @@ function renderPertImageArrow_(pert, sourcePosition, targetPosition, incomingInd
   const svgStartY = startPoint.y - minY;
   const svgEndX = endPoint.x - minX;
   const svgEndY = endPoint.y - minY;
-  const svg = createPertArrowSvg_(imageWidth, imageHeight, svgStartX, svgStartY, svgEndX, svgEndY);
-  const blob = Utilities.newBlob(svg, 'image/svg+xml', 'pert-arrow.svg');
+  const blob = createPertArrowPngBlob_(imageWidth, imageHeight, svgStartX, svgStartY, svgEndX, svgEndY);
   const anchorCol = Math.max(1, Math.floor(minX / PERT_CELL_WIDTH_PX) + 1);
   const anchorRow = Math.max(1, Math.floor(minY / PERT_CELL_HEIGHT_PX) + 1);
   const xOffset = Math.max(0, Math.round(minX - (anchorCol - 1) * PERT_CELL_WIDTH_PX));
@@ -864,6 +863,175 @@ function renderPertImageArrow_(pert, sourcePosition, targetPosition, incomingInd
     .setAltTextTitle(PERT_ARROW_IMAGE_ALT_TEXT)
     .setWidth(imageWidth)
     .setHeight(imageHeight);
+}
+
+function createPertArrowPngBlob_(width, height, startX, startY, endX, endY) {
+  const rgba = createTransparentRgbaBuffer_(width, height);
+  drawPertPngLine_(rgba, width, height, startX, startY, endX, endY, 4);
+  drawPertPngArrowHead_(rgba, width, height, startX, startY, endX, endY, 14, 10);
+
+  return Utilities.newBlob(createPngBytes_(width, height, rgba), 'image/png', 'pert-arrow.png');
+}
+
+function createTransparentRgbaBuffer_(width, height) {
+  return Array.from({ length: width * height * 4 }, () => 0);
+}
+
+function drawPertPngLine_(rgba, width, height, startX, startY, endX, endY, thickness) {
+  const dx = endX - startX;
+  const dy = endY - startY;
+  const steps = Math.max(Math.abs(dx), Math.abs(dy), 1);
+
+  for (let step = 0; step <= steps; step++) {
+    const x = startX + dx * step / steps;
+    const y = startY + dy * step / steps;
+    drawPertPngCircle_(rgba, width, height, x, y, thickness / 2);
+  }
+}
+
+function drawPertPngArrowHead_(rgba, width, height, startX, startY, endX, endY, length, halfWidth) {
+  const angle = Math.atan2(endY - startY, endX - startX);
+  const baseX = endX - Math.cos(angle) * length;
+  const baseY = endY - Math.sin(angle) * length;
+  const normalX = -Math.sin(angle);
+  const normalY = Math.cos(angle);
+  const points = [
+    { x: endX, y: endY },
+    { x: baseX + normalX * halfWidth, y: baseY + normalY * halfWidth },
+    { x: baseX - normalX * halfWidth, y: baseY - normalY * halfWidth },
+  ];
+
+  fillPertPngTriangle_(rgba, width, height, points);
+}
+
+function fillPertPngTriangle_(rgba, width, height, points) {
+  const minX = Math.max(0, Math.floor(Math.min(points[0].x, points[1].x, points[2].x)));
+  const maxX = Math.min(width - 1, Math.ceil(Math.max(points[0].x, points[1].x, points[2].x)));
+  const minY = Math.max(0, Math.floor(Math.min(points[0].y, points[1].y, points[2].y)));
+  const maxY = Math.min(height - 1, Math.ceil(Math.max(points[0].y, points[1].y, points[2].y)));
+
+  for (let y = minY; y <= maxY; y++) {
+    for (let x = minX; x <= maxX; x++) {
+      if (isPointInPertTriangle_(x + 0.5, y + 0.5, points)) {
+        setPertPngPixel_(rgba, width, height, x, y);
+      }
+    }
+  }
+}
+
+function isPointInPertTriangle_(x, y, points) {
+  const area = getPertTriangleSignedArea_(points[0], points[1], points[2]);
+  const area1 = getPertTriangleSignedArea_({ x, y }, points[1], points[2]);
+  const area2 = getPertTriangleSignedArea_(points[0], { x, y }, points[2]);
+  const area3 = getPertTriangleSignedArea_(points[0], points[1], { x, y });
+  const hasNegative = area1 < 0 || area2 < 0 || area3 < 0;
+  const hasPositive = area1 > 0 || area2 > 0 || area3 > 0;
+
+  return area < 0 ? !hasPositive : !hasNegative;
+}
+
+function getPertTriangleSignedArea_(a, b, c) {
+  return (a.x - c.x) * (b.y - c.y) - (b.x - c.x) * (a.y - c.y);
+}
+
+function drawPertPngCircle_(rgba, width, height, centerX, centerY, radius) {
+  const minX = Math.max(0, Math.floor(centerX - radius));
+  const maxX = Math.min(width - 1, Math.ceil(centerX + radius));
+  const minY = Math.max(0, Math.floor(centerY - radius));
+  const maxY = Math.min(height - 1, Math.ceil(centerY + radius));
+  const radiusSquared = radius * radius;
+
+  for (let y = minY; y <= maxY; y++) {
+    for (let x = minX; x <= maxX; x++) {
+      const dx = x + 0.5 - centerX;
+      const dy = y + 0.5 - centerY;
+      if (dx * dx + dy * dy <= radiusSquared) {
+        setPertPngPixel_(rgba, width, height, x, y);
+      }
+    }
+  }
+}
+
+function setPertPngPixel_(rgba, width, height, x, y) {
+  if (x < 0 || x >= width || y < 0 || y >= height) return;
+
+  const offset = (y * width + x) * 4;
+  rgba[offset] = 0;
+  rgba[offset + 1] = 0;
+  rgba[offset + 2] = 0;
+  rgba[offset + 3] = 255;
+}
+
+function createPngBytes_(width, height, rgba) {
+  const rawRows = [];
+  for (let y = 0; y < height; y++) {
+    rawRows.push(0);
+    const rowOffset = y * width * 4;
+    for (let x = 0; x < width * 4; x++) {
+      rawRows.push(rgba[rowOffset + x]);
+    }
+  }
+
+  return []
+    .concat([137, 80, 78, 71, 13, 10, 26, 10])
+    .concat(createPngChunk_('IHDR', uint32Bytes_(width).concat(uint32Bytes_(height), [8, 6, 0, 0, 0])))
+    .concat(createPngChunk_('IDAT', createZlibStoredBlock_(rawRows)))
+    .concat(createPngChunk_('IEND', []));
+}
+
+function createPngChunk_(type, data) {
+  const typeBytes = type.split('').map(char => char.charCodeAt(0));
+  const crc = crc32Bytes_(typeBytes.concat(data));
+
+  return uint32Bytes_(data.length).concat(typeBytes, data, uint32Bytes_(crc));
+}
+
+function createZlibStoredBlock_(data) {
+  const chunks = [0x78, 0x01];
+  for (let offset = 0; offset < data.length; offset += 65535) {
+    const block = data.slice(offset, offset + 65535);
+    const isFinalBlock = offset + block.length >= data.length;
+    const length = block.length;
+    chunks.push(isFinalBlock ? 1 : 0, length & 0xff, (length >> 8) & 0xff, (~length) & 0xff, ((~length) >> 8) & 0xff);
+    chunks.push.apply(chunks, block);
+  }
+
+  return chunks.concat(uint32Bytes_(adler32_(data)));
+}
+
+function uint32Bytes_(value) {
+  const unsignedValue = value >>> 0;
+  return [
+    (unsignedValue >>> 24) & 0xff,
+    (unsignedValue >>> 16) & 0xff,
+    (unsignedValue >>> 8) & 0xff,
+    unsignedValue & 0xff,
+  ];
+}
+
+function adler32_(bytes) {
+  let a = 1;
+  let b = 0;
+
+  bytes.forEach(byte => {
+    a = (a + byte) % 65521;
+    b = (b + a) % 65521;
+  });
+
+  return ((b << 16) | a) >>> 0;
+}
+
+function crc32Bytes_(bytes) {
+  let crc = 0xffffffff;
+
+  bytes.forEach(byte => {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit++) {
+      crc = crc & 1 ? (crc >>> 1) ^ 0xedb88320 : crc >>> 1;
+    }
+  });
+
+  return (crc ^ 0xffffffff) >>> 0;
 }
 
 function getPertArrowPixelStartPoint_(sourcePosition) {
