@@ -777,6 +777,7 @@ function renderPertArrows_(pert, schedule, layout, rowsNeeded, columnsNeeded) {
   // Use cell-based connectors instead of inserted SVG blobs because Sheets does not
   // consistently accept SVG image blobs and can throw "The blob format is unsupported."
   const arrowGrid = createPertArrowGrid_(rowsNeeded, columnsNeeded);
+  const occupiedNodeCells = createPertOccupiedNodeCellSet_(layout.positions);
 
   schedule.forEach(activity => {
     activity.predecessors.forEach((predecessorId, predecessorIndex) => {
@@ -798,7 +799,7 @@ function renderPertArrows_(pert, schedule, layout, rowsNeeded, columnsNeeded) {
 
       const incomingIndex = incomingRouteIndexByTarget.get(successorId).get(activity.id) || 0;
       const incomingCount = Math.max(1, successor.predecessors.length);
-      drawPertSmartArrow_(arrowGrid, sourcePosition, targetPosition, successorIndex, incomingIndex, incomingCount);
+      drawPertSmartArrow_(arrowGrid, sourcePosition, targetPosition, successorIndex, incomingIndex, incomingCount, occupiedNodeCells);
     });
   });
 
@@ -1070,7 +1071,28 @@ function createPertArrowGrid_(rowsNeeded, columnsNeeded) {
   return Array.from({ length: rowsNeeded }, () => Array.from({ length: columnsNeeded }, () => ''));
 }
 
-function drawPertSmartArrow_(arrowGrid, sourcePosition, targetPosition, successorIndex, incomingIndex, incomingCount) {
+function createPertOccupiedNodeCellSet_(positions) {
+  const occupiedCells = new Set();
+
+  positions.forEach(position => {
+    const nodeRow = getPertNodeRow_(position);
+    const nodeCol = getPertNodeColumn_(position);
+
+    for (let rowOffset = 0; rowOffset < PERT_NODE_HEIGHT; rowOffset++) {
+      for (let colOffset = 0; colOffset < PERT_NODE_WIDTH; colOffset++) {
+        occupiedCells.add(getPertCellKey_(nodeRow + rowOffset, nodeCol + colOffset));
+      }
+    }
+  });
+
+  return occupiedCells;
+}
+
+function getPertCellKey_(row, col) {
+  return `${row}:${col}`;
+}
+
+function drawPertSmartArrow_(arrowGrid, sourcePosition, targetPosition, successorIndex, incomingIndex, incomingCount, occupiedNodeCells) {
   const sourceRow = getPertNodeRow_(sourcePosition);
   const sourceCol = getPertNodeColumn_(sourcePosition);
   const targetRow = getPertNodeRow_(targetPosition);
@@ -1085,12 +1107,12 @@ function drawPertSmartArrow_(arrowGrid, sourcePosition, targetPosition, successo
 
   const verticalDelta = endPoint.row - startPoint.row;
 
-  if (verticalDelta === 0) {
+  if (verticalDelta === 0 && !doesPertHorizontalRouteHitNode_(startPoint.row, startPoint.col, endPoint.col, occupiedNodeCells)) {
     drawPertHorizontalArrowLine_(arrowGrid, startPoint.row, startPoint.col, endPoint.col);
     return;
   }
 
-  drawPertOrthogonalSmartArrow_(arrowGrid, startPoint, endPoint, successorIndex, incomingIndex);
+  drawPertOrthogonalSmartArrow_(arrowGrid, startPoint, endPoint, successorIndex, incomingIndex, occupiedNodeCells);
 }
 
 
@@ -1156,12 +1178,24 @@ function renderPertOrthogonalSmartArrow_(pert, startPoint, endPoint, successorIn
   renderPertArrowHead_(pert, endPoint.row, endPoint.col, '➜');
 }
 
-function drawPertOrthogonalSmartArrow_(arrowGrid, startPoint, endPoint, successorIndex, incomingIndex) {
-  const bendCol = getPertOrthogonalBendColumn_(startPoint, endPoint, successorIndex, incomingIndex);
+function drawPertOrthogonalSmartArrow_(arrowGrid, startPoint, endPoint, successorIndex, incomingIndex, occupiedNodeCells) {
+  const bendCol = occupiedNodeCells
+    ? getPertNodeAvoidingBendColumn_(startPoint, endPoint)
+    : getPertOrthogonalBendColumn_(startPoint, endPoint, successorIndex, incomingIndex);
+  const routeRow = getPertOrthogonalRouteRow_(arrowGrid, startPoint, endPoint, bendCol, occupiedNodeCells);
+
+  if (routeRow === null) {
+    drawPertHorizontalConnector_(arrowGrid, startPoint.row, startPoint.col, bendCol);
+    drawPertVerticalConnector_(arrowGrid, bendCol, startPoint.row, endPoint.row);
+    drawPertHorizontalArrowLine_(arrowGrid, endPoint.row, bendCol, endPoint.col);
+    return;
+  }
 
   drawPertHorizontalConnector_(arrowGrid, startPoint.row, startPoint.col, bendCol);
-  drawPertVerticalConnector_(arrowGrid, bendCol, startPoint.row, endPoint.row);
-  drawPertHorizontalArrowLine_(arrowGrid, endPoint.row, bendCol, endPoint.col);
+  drawPertVerticalConnector_(arrowGrid, bendCol, startPoint.row, routeRow);
+  drawPertHorizontalConnector_(arrowGrid, routeRow, bendCol, endPoint.col);
+  drawPertVerticalConnector_(arrowGrid, endPoint.col, routeRow, endPoint.row);
+  setPertArrowGlyph_(arrowGrid, endPoint.row, endPoint.col, '➜');
 }
 
 function getPertOrthogonalBendColumn_(startPoint, endPoint, successorIndex, incomingIndex) {
@@ -1172,6 +1206,51 @@ function getPertOrthogonalBendColumn_(startPoint, endPoint, successorIndex, inco
   const bendCol = centerCol + Math.max(-2, Math.min(2, routeOffset));
 
   return Math.max(startSpacerCol, Math.min(endSpacerCol, bendCol));
+}
+
+function getPertNodeAvoidingBendColumn_(startPoint, endPoint) {
+  const startSpacerCol = startPoint.col + PERT_ARROW_START_PADDING;
+  const endSpacerCol = endPoint.col - PERT_ARROW_END_PADDING;
+  return Math.max(startSpacerCol, Math.min(endSpacerCol, startSpacerCol));
+}
+
+function getPertOrthogonalRouteRow_(arrowGrid, startPoint, endPoint, bendCol, occupiedNodeCells) {
+  if (!occupiedNodeCells) return null;
+
+  const topRow = Math.max(1, Math.min(startPoint.row, endPoint.row) - 1);
+  const bottomRow = Math.min(arrowGrid.length, Math.max(startPoint.row, endPoint.row) + 1);
+  const candidateRows = [topRow, bottomRow, startPoint.row, endPoint.row];
+
+  for (let index = 0; index < candidateRows.length; index++) {
+    const routeRow = candidateRows[index];
+    if (isPertRouteClear_(routeRow, bendCol, endPoint.col, occupiedNodeCells)) return routeRow;
+  }
+
+  return null;
+}
+
+function isPertRouteClear_(row, startCol, endCol, occupiedNodeCells) {
+  const minCol = Math.min(startCol, endCol);
+  const maxCol = Math.max(startCol, endCol);
+
+  for (let col = minCol; col <= maxCol; col++) {
+    if (occupiedNodeCells.has(getPertCellKey_(row, col))) return false;
+  }
+
+  return true;
+}
+
+function doesPertHorizontalRouteHitNode_(row, startCol, endCol, occupiedNodeCells) {
+  if (!occupiedNodeCells) return false;
+
+  const minCol = Math.min(startCol, endCol);
+  const maxCol = Math.max(startCol, endCol);
+
+  for (let col = minCol; col <= maxCol; col++) {
+    if (occupiedNodeCells.has(getPertCellKey_(row, col))) return true;
+  }
+
+  return false;
 }
 
 function renderPertDiagonalArrow_(pert, startPoint, endPoint) {
