@@ -26,8 +26,8 @@ const SCHED_TIMELINE_DAYS_ROW = 3;
 const SCHED_FIRST_DATA_ROW = 4;
 const GANTT_FIRST_COLUMN = 9;
 const GANTT_CELL_SIZE_PX = 20;
-const PERT_NODE_ROW_SPACING = 6;
-const PERT_MIN_TERMINAL_ROW_SPACING = 10;
+const PERT_NODE_ROW_SPACING = 8;
+const PERT_MIN_TERMINAL_ROW_SPACING = 12;
 const PERT_NODE_COLUMN_SPACING = 9;
 const PERT_NODE_HEIGHT = 3;
 const PERT_NODE_WIDTH = 3;
@@ -41,16 +41,16 @@ const PERT_ARROW_IMAGE_ALT_TEXT = 'Generated PERT dependency arrow';
 const PERT_CELL_WIDTH_PX = 80;
 const PERT_CELL_HEIGHT_PX = 28;
 const PERT_ARROW_IMAGE_PADDING_PX = 4;
-const PERT_ARROW_IMAGE_NODE_GAP_PX = 20;
+const PERT_ARROW_IMAGE_NODE_GAP_PX = 24;
 const PERT_MAX_ARROW_IMAGE_PIXELS = 2500000;
 const PERT_MAX_ARROW_IMAGE_BYTES = 12000000;
 const PERT_MAX_LEVELS_PER_ROW_BAND = 120;
 const PERT_ROW_BAND_SPACING = 4;
-const PERT_MIN_CONNECTED_NODE_ROW_DELTA = 2;
+const PERT_MIN_CONNECTED_NODE_ROW_DELTA = 4;
 const PERT_MAX_DIRECT_ARROW_RENDER_CELLS = 200000;
 const PERT_MAX_IMAGE_ARROW_COUNT = 200;
 const PERT_IMAGE_ARROW_MAX_NODE_COUNT = 250;
-const PERT_USE_IMAGE_ARROWS = false;
+const PERT_USE_IMAGE_ARROWS = true;
 const DEFAULT_WBS_SHEET_NAME = 'WBS';
 const DEFAULT_SCHED_SHEET_NAME = 'Scheduling';
 const DEFAULT_PERT_SHEET_NAME = 'PERT Diagram';
@@ -1025,7 +1025,26 @@ function createPertArrowPngBlob_(width, height, startX, startY, endX, endY) {
 }
 
 function getPertArrowImageRoutePoints_(startX, startY, endX, endY) {
-  return [{ x: startX, y: startY }, { x: endX, y: endY }];
+  if (startY === endY) return [{ x: startX, y: startY }, { x: endX, y: endY }];
+
+  const horizontalDistance = endX - startX;
+  const minBendGap = PERT_CELL_WIDTH_PX;
+
+  if (horizontalDistance <= minBendGap) {
+    return [{ x: startX, y: startY }, { x: endX, y: endY }];
+  }
+
+  const bendX = startX + Math.max(
+    minBendGap,
+    Math.min(horizontalDistance - minBendGap, Math.round(horizontalDistance / 2))
+  );
+
+  return [
+    { x: startX, y: startY },
+    { x: bendX, y: startY },
+    { x: bendX, y: endY },
+    { x: endX, y: endY },
+  ];
 }
 
 function createTransparentRgbaBuffer_(width, height) {
