@@ -544,7 +544,7 @@ function renderPertDiagram_(pert, schedule) {
   breakApartOverlappingMergedRanges_(pertDescriptionRange);
   pertDescriptionRange
     .mergeAcross()
-    .setValue('Each node shows ES, Duration, EF on top; Activity in the middle; and LS, Slack, LF on the bottom. Successor links use clean generated PNG arrows with separate entry points for multiple predecessors.')
+    .setValue('Each node shows ES, Duration, EF on top; Activity in the middle; and LS, Slack, LF on the bottom. Successor links use clean diagonal PNG arrows with separate entry points for multiple predecessors.')
     .setHorizontalAlignment('center')
     .setWrap(true)
     .setBackground('#ddebf7');
@@ -968,17 +968,7 @@ function createPertArrowPngBlob_(width, height, startX, startY, endX, endY) {
 }
 
 function getPertArrowImageRoutePoints_(startX, startY, endX, endY) {
-  if (Math.abs(endY - startY) < 1) {
-    return [{ x: startX, y: startY }, { x: endX, y: endY }];
-  }
-
-  const bendX = Math.round(startX + (endX - startX) / 2);
-  return [
-    { x: startX, y: startY },
-    { x: bendX, y: startY },
-    { x: bendX, y: endY },
-    { x: endX, y: endY },
-  ];
+  return [{ x: startX, y: startY }, { x: endX, y: endY }];
 }
 
 function createTransparentRgbaBuffer_(width, height) {
@@ -1226,6 +1216,11 @@ function drawPertSmartArrow_(arrowGrid, sourcePosition, targetPosition, successo
     return;
   }
 
+  if (canDrawPertDiagonalRoute_(arrowGrid, startPoint, endPoint, occupiedNodeCells)) {
+    drawPertDiagonalArrow_(arrowGrid, startPoint, endPoint);
+    return;
+  }
+
   drawPertOrthogonalSmartArrow_(arrowGrid, startPoint, endPoint, successorIndex, incomingIndex, occupiedNodeCells);
 }
 
@@ -1370,6 +1365,30 @@ function doesPertHorizontalRouteHitNode_(row, startCol, endCol, occupiedNodeCell
   }
 
   return false;
+}
+
+
+function canDrawPertDiagonalRoute_(arrowGrid, startPoint, endPoint, occupiedNodeCells) {
+  if (endPoint.col <= startPoint.col || endPoint.row === startPoint.row) return false;
+
+  const rowDelta = Math.abs(endPoint.row - startPoint.row);
+  const colDelta = endPoint.col - startPoint.col;
+  if (rowDelta > colDelta) return false;
+
+  if (!occupiedNodeCells) return true;
+
+  const step = endPoint.row > startPoint.row ? 1 : -1;
+  for (let stepIndex = 0; stepIndex <= rowDelta; stepIndex++) {
+    const row = startPoint.row + stepIndex * step;
+    const col = startPoint.col + stepIndex;
+    if (occupiedNodeCells.has(getPertCellKey_(row, col))) return false;
+  }
+
+  for (let col = startPoint.col + rowDelta; col <= endPoint.col; col++) {
+    if (occupiedNodeCells.has(getPertCellKey_(endPoint.row, col))) return false;
+  }
+
+  return true;
 }
 
 function renderPertDiagonalArrow_(pert, startPoint, endPoint) {
