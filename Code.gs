@@ -40,7 +40,8 @@ const PERT_FIRST_NODE_COLUMN = 1;
 const PERT_ARROW_IMAGE_ALT_TEXT = 'Generated PERT dependency arrow';
 const PERT_CELL_WIDTH_PX = 80;
 const PERT_CELL_HEIGHT_PX = 28;
-const PERT_ARROW_IMAGE_PADDING_PX = 18;
+const PERT_ARROW_IMAGE_PADDING_PX = 4;
+const PERT_ARROW_IMAGE_NODE_GAP_PX = 20;
 const PERT_MAX_ARROW_IMAGE_PIXELS = 2500000;
 const PERT_MAX_ARROW_IMAGE_BYTES = 12000000;
 const PERT_MAX_LEVELS_PER_ROW_BAND = 120;
@@ -907,6 +908,8 @@ function renderPertArrowGridInChunks_(pert, arrowGrid, rowsNeeded, columnsNeeded
 function renderPertImageArrow_(pert, sourcePosition, targetPosition, successorIndex, successorCount, incomingIndex, incomingCount) {
   const startPoint = getPertArrowPixelStartPoint_(sourcePosition, successorIndex, successorCount);
   const endPoint = getPertArrowPixelEndPoint_(targetPosition, incomingIndex, incomingCount);
+  startPoint.x += PERT_ARROW_IMAGE_NODE_GAP_PX;
+  endPoint.x -= PERT_ARROW_IMAGE_NODE_GAP_PX;
   if (endPoint.x <= startPoint.x) return false;
 
   const minX = Math.min(startPoint.x, endPoint.x) - PERT_ARROW_IMAGE_PADDING_PX;
