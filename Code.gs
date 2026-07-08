@@ -895,21 +895,26 @@ function renderPertImageArrow_(pert, sourcePosition, targetPosition, successorIn
   const imageWidth = Math.max(1, Math.ceil(maxX - minX));
   const imageHeight = Math.max(1, Math.ceil(maxY - minY));
   if (!canRenderPertArrowImage_(imageWidth, imageHeight)) return false;
-  const svgStartX = startPoint.x - minX;
-  const svgStartY = startPoint.y - minY;
-  const svgEndX = endPoint.x - minX;
-  const svgEndY = endPoint.y - minY;
-  const blob = createPertArrowPngBlob_(imageWidth, imageHeight, svgStartX, svgStartY, svgEndX, svgEndY);
-  const anchorCol = Math.max(1, Math.floor(minX / PERT_CELL_WIDTH_PX) + 1);
-  const anchorRow = Math.max(1, Math.floor(minY / PERT_CELL_HEIGHT_PX) + 1);
-  const xOffset = Math.max(0, Math.round(minX - (anchorCol - 1) * PERT_CELL_WIDTH_PX));
-  const yOffset = Math.max(0, Math.round(minY - (anchorRow - 1) * PERT_CELL_HEIGHT_PX));
 
-  pert.insertImage(blob, anchorCol, anchorRow, xOffset, yOffset)
-    .setAltTextTitle(PERT_ARROW_IMAGE_ALT_TEXT)
-    .setWidth(imageWidth)
-    .setHeight(imageHeight);
-  return true;
+  try {
+    const svgStartX = startPoint.x - minX;
+    const svgStartY = startPoint.y - minY;
+    const svgEndX = endPoint.x - minX;
+    const svgEndY = endPoint.y - minY;
+    const blob = createPertArrowPngBlob_(imageWidth, imageHeight, svgStartX, svgStartY, svgEndX, svgEndY);
+    const anchorCol = Math.max(1, Math.floor(minX / PERT_CELL_WIDTH_PX) + 1);
+    const anchorRow = Math.max(1, Math.floor(minY / PERT_CELL_HEIGHT_PX) + 1);
+    const xOffset = Math.max(0, Math.round(minX - (anchorCol - 1) * PERT_CELL_WIDTH_PX));
+    const yOffset = Math.max(0, Math.round(minY - (anchorRow - 1) * PERT_CELL_HEIGHT_PX));
+
+    pert.insertImage(blob, anchorCol, anchorRow, xOffset, yOffset)
+      .setAltTextTitle(PERT_ARROW_IMAGE_ALT_TEXT)
+      .setWidth(imageWidth)
+      .setHeight(imageHeight);
+    return true;
+  } catch (error) {
+    return false;
+  }
 }
 
 function canRenderPertArrowImage_(width, height) {
@@ -1177,7 +1182,8 @@ function drawPertSmartArrow_(arrowGrid, sourcePosition, targetPosition, successo
 
 function drawPertWrappedArrow_(arrowGrid, startPoint, endPoint) {
   const lastCol = arrowGrid[0].length;
-  drawPertHorizontalArrowLine_(arrowGrid, startPoint.row, startPoint.col, lastCol);
+  drawPertHorizontalConnector_(arrowGrid, startPoint.row, startPoint.col, lastCol);
+  drawPertVerticalConnector_(arrowGrid, lastCol, startPoint.row, endPoint.row);
   drawPertHorizontalArrowLine_(arrowGrid, endPoint.row, 1, endPoint.col);
 }
 
