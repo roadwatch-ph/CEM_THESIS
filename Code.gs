@@ -1627,7 +1627,16 @@ function styleSchedule_(sched, activityCount, timelineLength) {
  */
 function onOpen(e) {
   const ss = e && e.source ? e.source : SpreadsheetApp.getActiveSpreadsheet();
+  addPertDiagramMenu_();
   generateScheduleForSpreadsheet_(ss, { skipIfBusy: true });
+}
+
+function addPertDiagramMenu_() {
+  SpreadsheetApp.getUi()
+    .createMenu('PERT Tools')
+    .addItem('Generate Scheduling and PERT Sheets', 'generateSchedule')
+    .addItem('Install Auto Schedule Trigger', 'installAutoScheduleTrigger')
+    .addToUi();
 }
 
 /**
@@ -1846,4 +1855,225 @@ function numberToAlphabeticId_(number, formatSource) {
   }
 
   return formatSource === formatSource.toLowerCase() ? id.toLowerCase() : id;
+}
+
+/**
+ * Web app endpoint for viewing and exporting PERT diagrams outside the sheet.
+ * Deploy the Apps Script project as a web app, then open the deployment URL.
+ */
+function doGet() {
+  return HtmlService
+    .createHtmlOutput(getPertDiagramWebAppHtml_())
+    .setTitle('PERT Diagram Generator')
+    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+}
+
+function getPertWebAppData() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const wbsSheets = getWbsSheets_(ss);
+
+  return {
+    spreadsheetName: ss.getName(),
+    sheets: wbsSheets.map(wbs => {
+      const lastRow = wbs.getLastRow();
+      if (lastRow < 2) {
+        return { name: wbs.getName(), activities: [], error: '' };
+      }
+
+      try {
+        const rows = wbs.getRange(2, 1, lastRow - 1, 4).getValues();
+        const activities = parseAndValidateWbs_(rows, wbs.getName());
+        const schedule = computeSchedule_(topologicalSort_(activities));
+        const pertActivities = addPertMilestones_(schedule);
+        const layout = buildPertLayout_(pertActivities);
+        const nodes = pertActivities.map(activity => {
+          const position = layout.positions.get(activity.id);
+          return Object.assign({}, activity, {
+            x: (getPertNodeColumn_(position) - 1) * PERT_CELL_WIDTH_PX,
+            y: (getPertNodeRow_(position) - 1) * PERT_CELL_HEIGHT_PX,
+            width: PERT_NODE_WIDTH * PERT_CELL_WIDTH_PX,
+            height: PERT_NODE_HEIGHT * PERT_CELL_HEIGHT_PX,
+          });
+        });
+        const links = buildPertArrowRoutes_(pertActivities, layout).map(route => ({
+          start: getPertWebArrowPoint_(route.sourcePosition, route.successorIndex, route.successorCount, true),
+          end: getPertWebArrowPoint_(route.targetPosition, route.incomingIndex, route.incomingCount, false),
+        }));
+
+        return {
+          name: wbs.getName(),
+          projectFinish: Math.max(...schedule.map(activity => activity.earlyFinish)),
+          width: Math.max(900, (layout.maxRenderedLevel + 2) * PERT_NODE_COLUMN_SPACING * PERT_CELL_WIDTH_PX),
+          height: Math.max(520, (layout.maxNodeRow + PERT_NODE_HEIGHT + 3) * PERT_CELL_HEIGHT_PX),
+          activities: nodes,
+          links,
+          error: '',
+        };
+      } catch (error) {
+        return { name: wbs.getName(), activities: [], error: error.message };
+      }
+    }),
+  };
+}
+
+function getPertWebArrowPoint_(position, routeIndex, routeCount, isSource) {
+  const nodeCol = getPertNodeColumn_(position);
+  const nodeRow = getPertNodeRow_(position);
+  const edgeRow = getPertDistributedNodeEdgeRow_(nodeRow, routeIndex || 0, routeCount || 1);
+
+  return {
+    x: (nodeCol - 1 + (isSource ? PERT_NODE_WIDTH : 0)) * PERT_CELL_WIDTH_PX,
+    y: (edgeRow - 0.5) * PERT_CELL_HEIGHT_PX,
+  };
+}
+
+function getPertDiagramWebAppHtml_() {
+  return `<!doctype html>
+<html>
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body { margin: 0; font-family: Arial, sans-serif; background: #f4f7fb; color: #1f2933; }
+    header { background: #1f4e79; color: white; padding: 18px 24px; }
+    main { padding: 18px 24px 28px; }
+    .toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 14px; }
+    select, button { border: 1px solid #b8c7d9; border-radius: 6px; padding: 9px 12px; background: white; font-size: 14px; }
+    button { cursor: pointer; font-weight: 700; color: #1f4e79; }
+    button.primary { background: #1f4e79; color: white; border-color: #1f4e79; }
+    #status { color: #52606d; }
+    #canvasWrap { overflow: auto; background: white; border: 1px solid #d9e2ec; border-radius: 10px; box-shadow: 0 2px 8px rgba(16, 42, 67, .08); }
+    svg { display: block; min-width: 100%; }
+    .node rect { stroke-width: 2; }
+    .node text { text-anchor: middle; dominant-baseline: middle; font-size: 13px; }
+    .node .activity { font-weight: 700; font-size: 15px; }
+    .legend { margin-top: 12px; color: #52606d; font-size: 13px; }
+    .error { background: #fff5f5; border: 1px solid #feb2b2; color: #9b2c2c; border-radius: 8px; padding: 12px; }
+  </style>
+</head>
+<body>
+  <header><h1>PERT Diagram Generator</h1><div id="subtitle">Loading WBS data...</div></header>
+  <main>
+    <div class="toolbar">
+      <label>WBS Sheet <select id="sheetSelect"></select></label>
+      <button class="primary" onclick="loadData()">Refresh</button>
+      <button onclick="downloadSvg()">Export SVG</button>
+      <button onclick="downloadPng()">Export PNG</button>
+      <span id="status"></span>
+    </div>
+    <div id="message"></div>
+    <div id="canvasWrap"><svg id="diagram" role="img" aria-label="PERT diagram"></svg></div>
+    <div class="legend">Node format: ES | Duration | EF, Activity, LS | Slack | LF. Orange nodes are critical path activities; blue nodes are START/FINISH milestones.</div>
+  </main>
+<script>
+let appData = null;
+function loadData() {
+  document.getElementById('status').textContent = 'Loading...';
+  google.script.run.withSuccessHandler(data => {
+    appData = data;
+    document.getElementById('subtitle').textContent = data.spreadsheetName;
+    const selected = document.getElementById('sheetSelect').value;
+    const select = document.getElementById('sheetSelect');
+    select.innerHTML = '';
+    data.sheets.forEach((sheet, index) => select.add(new Option(sheet.name, index)));
+    if (selected) select.value = selected;
+    renderSelectedSheet();
+    document.getElementById('status').textContent = 'Ready';
+  }).withFailureHandler(error => {
+    document.getElementById('status').textContent = 'Error';
+    document.getElementById('message').innerHTML = '<div class="error">' + escapeHtml(error.message) + '</div>';
+  }).getPertWebAppData();
+}
+function renderSelectedSheet() {
+  if (!appData || appData.sheets.length === 0) return;
+  const sheet = appData.sheets[Number(document.getElementById('sheetSelect').value || 0)];
+  document.getElementById('message').innerHTML = sheet.error ? '<div class="error">' + escapeHtml(sheet.error) + '</div>' : '';
+  renderDiagram(sheet);
+}
+document.getElementById('sheetSelect').addEventListener('change', renderSelectedSheet);
+function renderDiagram(sheet) {
+  const svg = document.getElementById('diagram');
+  svg.setAttribute('viewBox', '0 0 ' + sheet.width + ' ' + sheet.height);
+  svg.setAttribute('width', sheet.width);
+  svg.setAttribute('height', sheet.height);
+  svg.innerHTML = '<defs><marker id="arrow" markerWidth="12" markerHeight="12" refX="11" refY="6" orient="auto"><path d="M0,0 L12,6 L0,12 z" fill="#111827"/></marker></defs>';
+  sheet.links.forEach(link => {
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    const midX = (link.start.x + link.end.x) / 2;
+    path.setAttribute('d', 'M ' + link.start.x + ' ' + link.start.y + ' C ' + midX + ' ' + link.start.y + ', ' + midX + ' ' + link.end.y + ', ' + link.end.x + ' ' + link.end.y);
+    path.setAttribute('fill', 'none');
+    path.setAttribute('stroke', '#111827');
+    path.setAttribute('stroke-width', '3');
+    path.setAttribute('marker-end', 'url(#arrow)');
+    svg.appendChild(path);
+  });
+  sheet.activities.forEach(activity => svg.appendChild(createNode(activity)));
+}
+function createNode(activity) {
+  const group = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+  group.setAttribute('class', 'node');
+  const fill = activity.isPertMilestone ? '#eaf2f8' : activity.isCritical ? '#fce4d6' : '#ffffff';
+  const stroke = activity.isCritical ? '#c00000' : '#111827';
+  const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+  rect.setAttribute('x', activity.x); rect.setAttribute('y', activity.y);
+  rect.setAttribute('width', activity.width); rect.setAttribute('height', activity.height);
+  rect.setAttribute('rx', '8'); rect.setAttribute('fill', fill); rect.setAttribute('stroke', stroke);
+  group.appendChild(rect);
+  addText(group, activity.x + activity.width / 6, activity.y + activity.height / 6, activity.earlyStart);
+  addText(group, activity.x + activity.width / 2, activity.y + activity.height / 6, activity.duration);
+  addText(group, activity.x + activity.width * 5 / 6, activity.y + activity.height / 6, activity.earlyFinish);
+  addText(group, activity.x + activity.width / 2, activity.y + activity.height / 2, activity.id, 'activity');
+  addText(group, activity.x + activity.width / 6, activity.y + activity.height * 5 / 6, activity.lateStart);
+  addText(group, activity.x + activity.width / 2, activity.y + activity.height * 5 / 6, activity.slack);
+  addText(group, activity.x + activity.width * 5 / 6, activity.y + activity.height * 5 / 6, activity.lateFinish);
+  return group;
+}
+function addText(group, x, y, value, className) {
+  const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+  text.setAttribute('x', x); text.setAttribute('y', y);
+  if (className) text.setAttribute('class', className);
+  text.textContent = value;
+  group.appendChild(text);
+}
+function downloadSvg() {
+  const svg = document.getElementById('diagram').cloneNode(true);
+  svg.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+  downloadBlob(new Blob([new XMLSerializer().serializeToString(svg)], { type: 'image/svg+xml' }), fileName('svg'));
+}
+function downloadPng() {
+  const svg = document.getElementById('diagram').cloneNode(true);
+  svg.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+  const image = new Image();
+  const url = URL.createObjectURL(new Blob([new XMLSerializer().serializeToString(svg)], { type: 'image/svg+xml' }));
+  image.onload = () => {
+    const canvas = document.createElement('canvas');
+    canvas.width = Number(svg.getAttribute('width'));
+    canvas.height = Number(svg.getAttribute('height'));
+    canvas.getContext('2d').fillStyle = '#ffffff';
+    canvas.getContext('2d').fillRect(0, 0, canvas.width, canvas.height);
+    canvas.getContext('2d').drawImage(image, 0, 0);
+    URL.revokeObjectURL(url);
+    canvas.toBlob(blob => downloadBlob(blob, fileName('png')));
+  };
+  image.src = url;
+}
+function downloadBlob(blob, name) {
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = name;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+}
+function fileName(extension) {
+  const sheet = appData.sheets[Number(document.getElementById('sheetSelect').value || 0)];
+  return sheet.name.replace(/[^A-Za-z0-9_-]+/g, '-') + '-PERT.' + extension;
+}
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
+}
+loadData();
+</script>
+</body>
+</html>`;
 }
