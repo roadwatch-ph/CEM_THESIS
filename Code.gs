@@ -40,6 +40,9 @@ const PERT_ARROW_IMAGE_ALT_TEXT = 'Generated PERT dependency arrow';
 const PERT_CELL_WIDTH_PX = 80;
 const PERT_CELL_HEIGHT_PX = 28;
 const PERT_ARROW_IMAGE_PADDING_PX = 8;
+const PERT_MAX_LEVELS_PER_ROW_BAND = 120;
+const PERT_ROW_BAND_SPACING = 4;
+const PERT_MAX_DIRECT_ARROW_RENDER_CELLS = 200000;
 const DEFAULT_WBS_SHEET_NAME = 'WBS';
 const DEFAULT_SCHED_SHEET_NAME = 'Scheduling';
 const DEFAULT_PERT_SHEET_NAME = 'PERT Diagram';
@@ -317,28 +320,82 @@ function parseAndValidateWbs_(rows, wbsSheetName) {
 
 function topologicalSort_(activities) {
   const byId = new Map(activities.map(activity => [activity.id, activity]));
-  const visiting = new Set();
-  const visited = new Set();
+  const inDegreeById = new Map(activities.map(activity => [activity.id, activity.predecessors.length]));
+  const successorsById = new Map(activities.map(activity => [activity.id, []]));
+  const queue = [];
   const ordered = [];
 
-  function visit(activity, path) {
-    if (visited.has(activity.id)) return;
+  activities.forEach(activity => {
+    activity.predecessors.forEach(predecessorId => successorsById.get(predecessorId).push(activity.id));
+    if (activity.predecessors.length === 0) queue.push(activity);
+  });
 
-    if (visiting.has(activity.id)) {
-      const cycleStart = path.indexOf(activity.id);
-      const cyclePath = path.slice(cycleStart).concat(activity.id).join(' -> ');
-      throw new Error(`Circular dependency detected: ${cyclePath}`);
-    }
+  queue.sort(compareActivitiesBySourceOrder_);
 
-    visiting.add(activity.id);
-    activity.predecessors.forEach(predecessorId => visit(byId.get(predecessorId), path.concat(activity.id)));
-    visiting.delete(activity.id);
-    visited.add(activity.id);
+  while (queue.length > 0) {
+    const activity = queue.shift();
     ordered.push(activity);
+
+    successorsById.get(activity.id).forEach(successorId => {
+      const nextInDegree = inDegreeById.get(successorId) - 1;
+      inDegreeById.set(successorId, nextInDegree);
+
+      if (nextInDegree === 0) {
+        queue.push(byId.get(successorId));
+        queue.sort(compareActivitiesBySourceOrder_);
+      }
+    });
   }
 
-  activities.forEach(activity => visit(activity, []));
+  if (ordered.length !== activities.length) {
+    throw new Error(`Circular dependency detected: ${getDependencyCyclePath_(activities, successorsById)}`);
+  }
+
   return ordered;
+}
+
+function compareActivitiesBySourceOrder_(a, b) {
+  const sourceDelta = (a.sourceRow || 0) - (b.sourceRow || 0);
+  if (sourceDelta !== 0) return sourceDelta;
+  return String(a.id).localeCompare(String(b.id));
+}
+
+function getDependencyCyclePath_(activities, successorsById) {
+  const remainingIds = new Set(activities.map(activity => activity.id));
+  const visited = new Set();
+  const stack = new Set();
+  const path = [];
+
+  function visit(id) {
+    if (stack.has(id)) {
+      const cycleStart = path.indexOf(id);
+      return path.slice(cycleStart).concat(id).join(' -> ');
+    }
+
+    if (visited.has(id)) return null;
+
+    visited.add(id);
+    stack.add(id);
+    path.push(id);
+
+    const successors = successorsById.get(id) || [];
+    for (let index = 0; index < successors.length; index++) {
+      const cyclePath = visit(successors[index]);
+      if (cyclePath) return cyclePath;
+    }
+
+    stack.delete(id);
+    path.pop();
+    remainingIds.delete(id);
+    return null;
+  }
+
+  for (let index = 0; index < activities.length; index++) {
+    const cyclePath = visit(activities[index].id);
+    if (cyclePath) return cyclePath;
+  }
+
+  return Array.from(remainingIds).join(' -> ') || 'unknown cycle';
 }
 
 function computeSchedule_(orderedActivities) {
@@ -462,11 +519,11 @@ function renderPertDiagram_(pert, schedule) {
   const pertActivities = addPertMilestones_(schedule);
   const layout = buildPertLayout_(pertActivities);
   const rowsNeeded = Math.max(10, layout.maxNodeRow + PERT_NODE_HEIGHT + 3);
-  const columnsNeeded = Math.max(12, PERT_FIRST_NODE_COLUMN + (layout.maxLevel + 1) * PERT_NODE_COLUMN_SPACING);
+  const columnsNeeded = Math.max(12, PERT_FIRST_NODE_COLUMN + (layout.maxRenderedLevel + 1) * PERT_NODE_COLUMN_SPACING);
   preparePertDiagramSheet_(pert, rowsNeeded, columnsNeeded);
   resizePertCells_(pert, rowsNeeded, columnsNeeded);
 
-  renderPertArrows_(pert, pertActivities, layout);
+  renderPertArrows_(pert, pertActivities, layout, rowsNeeded, columnsNeeded);
 
   const pertTitleRange = pert.getRange(1, 1, 1, columnsNeeded);
   breakApartOverlappingMergedRanges_(pertTitleRange);
@@ -541,25 +598,12 @@ function createPertMilestone_(id, predecessors, successors, day, sourceRow) {
 }
 
 function buildPertLayout_(schedule) {
-  const byId = new Map(schedule.map(activity => [activity.id, activity]));
-  const levelById = new Map();
-
-  function getLevel(activity) {
-    if (levelById.has(activity.id)) return levelById.get(activity.id);
-
-    const level = activity.predecessors.length === 0
-      ? 0
-      : Math.max(...activity.predecessors.map(predecessorId => getLevel(byId.get(predecessorId)))) + 1;
-    levelById.set(activity.id, level);
-    return level;
-  }
-
-  schedule.forEach(activity => getLevel(activity));
-
+  const levelById = buildPertLevelMap_(schedule);
   const activitiesByLevel = new Map();
   let maxLevel = 0;
+
   schedule.forEach(activity => {
-    const level = levelById.get(activity.id);
+    const level = levelById.get(activity.id) || 0;
     if (!activitiesByLevel.has(level)) activitiesByLevel.set(level, []);
     activitiesByLevel.get(level).push(activity);
     maxLevel = Math.max(maxLevel, level);
@@ -588,8 +632,11 @@ function buildPertLayout_(schedule) {
     const activities = activitiesByLevel.get(level) || [];
     const levelTopOffsetRows = getCenteredPertLevelOffsetRows_(activities.length, activitiesByLevel);
     activities.forEach((activity, lane) => {
-      const rowOffset = levelTopOffsetRows + lane * PERT_NODE_ROW_SPACING;
-      positions.set(activity.id, { level, lane, rowOffset });
+      const band = Math.floor(level / PERT_MAX_LEVELS_PER_ROW_BAND);
+      const renderedLevel = level % PERT_MAX_LEVELS_PER_ROW_BAND;
+      const rowBandOffset = band * getPertRowBandHeight_(activitiesByLevel);
+      const rowOffset = rowBandOffset + levelTopOffsetRows + lane * PERT_NODE_ROW_SPACING;
+      positions.set(activity.id, { level, renderedLevel, band, lane, rowOffset });
       maxLane = Math.max(maxLane, Math.ceil(rowOffset / PERT_NODE_ROW_SPACING));
     });
   }
@@ -598,8 +645,50 @@ function buildPertLayout_(schedule) {
     positions,
     maxLane,
     maxLevel,
+    maxRenderedLevel: Math.min(maxLevel, PERT_MAX_LEVELS_PER_ROW_BAND - 1),
     maxNodeRow: getMaxPertNodeRow_(positions),
   };
+}
+
+function buildPertLevelMap_(schedule) {
+  const byId = new Map(schedule.map(activity => [activity.id, activity]));
+  const inDegreeById = new Map(schedule.map(activity => [activity.id, activity.predecessors.length]));
+  const successorsById = new Map(schedule.map(activity => [activity.id, []]));
+  const levelById = new Map();
+  const queue = [];
+
+  schedule.forEach(activity => {
+    activity.predecessors.forEach(predecessorId => successorsById.get(predecessorId).push(activity.id));
+    if (activity.predecessors.length === 0) {
+      levelById.set(activity.id, 0);
+      queue.push(activity);
+    }
+  });
+
+  queue.sort(comparePertActivitiesBySourceOrder_);
+
+  while (queue.length > 0) {
+    const activity = queue.shift();
+    const activityLevel = levelById.get(activity.id) || 0;
+
+    successorsById.get(activity.id).forEach(successorId => {
+      levelById.set(successorId, Math.max(levelById.get(successorId) || 0, activityLevel + 1));
+      const nextInDegree = inDegreeById.get(successorId) - 1;
+      inDegreeById.set(successorId, nextInDegree);
+
+      if (nextInDegree === 0) {
+        queue.push(byId.get(successorId));
+        queue.sort(comparePertActivitiesBySourceOrder_);
+      }
+    });
+  }
+
+  return levelById;
+}
+
+function getPertRowBandHeight_(activitiesByLevel) {
+  const maxLevelActivityCount = Math.max(...Array.from(activitiesByLevel.values()).map(activities => activities.length));
+  return Math.max(1, maxLevelActivityCount) * PERT_NODE_ROW_SPACING + PERT_NODE_HEIGHT + PERT_ROW_BAND_SPACING;
 }
 
 function getCenteredPertLevelOffsetRows_(activityCount, activitiesByLevel) {
@@ -682,7 +771,7 @@ function renderPertNode_(pert, row, col, activity) {
 }
 
 
-function renderPertArrows_(pert, schedule, layout) {
+function renderPertArrows_(pert, schedule, layout, rowsNeeded, columnsNeeded) {
   const activityById = new Map(schedule.map(activity => [activity.id, activity]));
   const incomingRouteIndexByTarget = new Map();
 
@@ -695,6 +784,8 @@ function renderPertArrows_(pert, schedule, layout) {
     });
   });
 
+  const arrowGrid = createPertArrowGrid_(rowsNeeded, columnsNeeded);
+
   schedule.forEach(activity => {
     const sourcePosition = layout.positions.get(activity.id);
     if (!sourcePosition) return;
@@ -706,9 +797,44 @@ function renderPertArrows_(pert, schedule, layout) {
 
       const incomingIndex = incomingRouteIndexByTarget.get(successorId).get(activity.id) || 0;
       const incomingCount = Math.max(1, successor.predecessors.length);
-      renderPertSmartArrow_(pert, sourcePosition, targetPosition, successorIndex, incomingIndex, incomingCount);
+      drawPertSmartArrow_(arrowGrid, sourcePosition, targetPosition, successorIndex, incomingIndex, incomingCount);
     });
   });
+
+  renderPertArrowGrid_(pert, arrowGrid, rowsNeeded, columnsNeeded);
+}
+
+
+function renderPertArrowGrid_(pert, arrowGrid, rowsNeeded, columnsNeeded) {
+  if (rowsNeeded * columnsNeeded > PERT_MAX_DIRECT_ARROW_RENDER_CELLS) {
+    renderPertArrowGridInChunks_(pert, arrowGrid, rowsNeeded, columnsNeeded);
+    return;
+  }
+
+  const arrowRange = pert.getRange(1, 1, rowsNeeded, columnsNeeded);
+  arrowRange
+    .setValues(arrowGrid)
+    .setVerticalAlignment('middle')
+    .setHorizontalAlignment('center')
+    .setFontColor(PERT_ARROW_COLOR)
+    .setFontSize(PERT_ARROW_FONT_SIZE)
+    .setFontWeight('normal');
+}
+
+function renderPertArrowGridInChunks_(pert, arrowGrid, rowsNeeded, columnsNeeded) {
+  const chunkRows = Math.max(1, Math.floor(PERT_MAX_DIRECT_ARROW_RENDER_CELLS / columnsNeeded));
+
+  for (let startRow = 1; startRow <= rowsNeeded; startRow += chunkRows) {
+    const rowCount = Math.min(chunkRows, rowsNeeded - startRow + 1);
+    const values = arrowGrid.slice(startRow - 1, startRow - 1 + rowCount);
+    pert.getRange(startRow, 1, rowCount, columnsNeeded)
+      .setValues(values)
+      .setVerticalAlignment('middle')
+      .setHorizontalAlignment('center')
+      .setFontColor(PERT_ARROW_COLOR)
+      .setFontSize(PERT_ARROW_FONT_SIZE)
+      .setFontWeight('normal');
+  }
 }
 
 function renderPertImageArrow_(pert, sourcePosition, targetPosition, incomingIndex, incomingCount) {
@@ -783,7 +909,10 @@ function drawPertSmartArrow_(arrowGrid, sourcePosition, targetPosition, successo
   const startPoint = getPertArrowStartPoint_(sourceRow, sourceCol);
   const endPoint = getPertArrowEndPoint_(targetRow, targetCol, incomingIndex, incomingCount);
 
-  if (endPoint.col < startPoint.col) return;
+  if (endPoint.col < startPoint.col) {
+    drawPertWrappedArrow_(arrowGrid, startPoint, endPoint);
+    return;
+  }
 
   const verticalDelta = endPoint.row - startPoint.row;
 
@@ -793,6 +922,13 @@ function drawPertSmartArrow_(arrowGrid, sourcePosition, targetPosition, successo
   }
 
   drawPertOrthogonalSmartArrow_(arrowGrid, startPoint, endPoint, successorIndex, incomingIndex);
+}
+
+
+function drawPertWrappedArrow_(arrowGrid, startPoint, endPoint) {
+  const lastCol = arrowGrid[0].length;
+  drawPertHorizontalArrowLine_(arrowGrid, startPoint.row, startPoint.col, lastCol);
+  drawPertHorizontalArrowLine_(arrowGrid, endPoint.row, 1, endPoint.col);
 }
 
 function renderPertSmartArrow_(pert, sourcePosition, targetPosition, successorIndex, incomingIndex, incomingCount) {
@@ -929,7 +1065,8 @@ function getPertNodeRow_(position) {
 }
 
 function getPertNodeColumn_(position) {
-  return PERT_FIRST_NODE_COLUMN + position.level * PERT_NODE_COLUMN_SPACING;
+  const renderedLevel = position.renderedLevel === undefined ? position.level : position.renderedLevel;
+  return PERT_FIRST_NODE_COLUMN + renderedLevel * PERT_NODE_COLUMN_SPACING;
 }
 
 function renderPertHorizontalArrowLine_(pert, row, startCol, arrowHeadCol) {
