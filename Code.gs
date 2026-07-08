@@ -41,6 +41,8 @@ const PERT_ARROW_IMAGE_PADDING_PX = 8;
 const DEFAULT_WBS_SHEET_NAME = 'WBS';
 const DEFAULT_SCHED_SHEET_NAME = 'Scheduling';
 const DEFAULT_PERT_SHEET_NAME = 'PERT Diagram';
+const PERT_START_MILESTONE_ID = 'START';
+const PERT_FINISH_MILESTONE_ID = 'FINISH';
 const WBS_SHEET_NAME_PATTERN = /(^|\b)WBS($|\b)/i;
 const WBS_SHEET_NAME_REPLACEMENT_PATTERN = /WBS/ig;
 const SCHEDULING_SHEET_ID_PROPERTY_PREFIX = 'schedulingSheetIdForWbs_';
@@ -454,13 +456,14 @@ function renderPertDiagram_(pert, schedule) {
     return;
   }
 
-  const layout = buildPertLayout_(schedule);
+  const pertActivities = addPertMilestones_(schedule);
+  const layout = buildPertLayout_(pertActivities);
   const rowsNeeded = Math.max(8, 4 + layout.maxLane * PERT_NODE_ROW_SPACING + 4);
   const columnsNeeded = Math.max(10, 1 + (layout.maxLevel + 1) * PERT_NODE_COLUMN_SPACING);
   preparePertDiagramSheet_(pert, rowsNeeded, columnsNeeded);
   resizePertCells_(pert, rowsNeeded, columnsNeeded);
 
-  renderPertArrows_(pert, schedule, layout);
+  renderPertArrows_(pert, pertActivities, layout);
 
   const pertTitleRange = pert.getRange(1, 1, 1, columnsNeeded);
   breakApartOverlappingMergedRanges_(pertTitleRange);
@@ -477,13 +480,57 @@ function renderPertDiagram_(pert, schedule) {
     .setValue('Each node shows ES, Duration, EF on top; Activity in the middle; and LS, Slack, LF on the bottom. Successor links use black directional arrows that point into the next activity node.')
     .setHorizontalAlignment('center');
 
-  schedule.forEach(activity => {
+  pertActivities.forEach(activity => {
     const position = layout.positions.get(activity.id);
     const row = getPertNodeRow_(position);
     const col = getPertNodeColumn_(position);
     renderPertNode_(pert, row, col, activity);
   });
   renderPertLegend_(pert, rowsNeeded, columnsNeeded);
+}
+
+function addPertMilestones_(schedule) {
+  if (schedule.length === 0) return [];
+
+  const projectFinish = Math.max(...schedule.map(activity => activity.earlyFinish));
+  const startActivityIds = schedule
+    .filter(activity => activity.predecessors.length === 0)
+    .map(activity => activity.id);
+  const finishActivityIds = schedule
+    .filter(activity => activity.successors.length === 0)
+    .map(activity => activity.id);
+  const startMilestone = createPertMilestone_(PERT_START_MILESTONE_ID, [], startActivityIds, 0, 0);
+  const finishMilestone = createPertMilestone_(PERT_FINISH_MILESTONE_ID, finishActivityIds, [], projectFinish + 1, schedule.length + 1);
+  const activitiesWithMilestones = schedule.map(activity => {
+    const hasNoPredecessors = activity.predecessors.length === 0;
+    const hasNoSuccessors = activity.successors.length === 0;
+
+    return Object.assign({}, activity, {
+      predecessors: hasNoPredecessors ? [PERT_START_MILESTONE_ID] : activity.predecessors.slice(),
+      successors: hasNoSuccessors ? [PERT_FINISH_MILESTONE_ID] : activity.successors.slice(),
+      isPertMilestone: false,
+    });
+  });
+
+  return [startMilestone].concat(activitiesWithMilestones, finishMilestone);
+}
+
+function createPertMilestone_(id, predecessors, successors, day, sourceRow) {
+  return {
+    id,
+    name: id,
+    predecessors,
+    duration: 0,
+    earlyStart: day,
+    earlyFinish: day,
+    lateStart: day,
+    lateFinish: day,
+    sourceRow,
+    successors,
+    slack: 0,
+    isCritical: true,
+    isPertMilestone: true,
+  };
 }
 
 function buildPertLayout_(schedule) {
@@ -502,25 +549,82 @@ function buildPertLayout_(schedule) {
 
   schedule.forEach(activity => getLevel(activity));
 
-  const laneByLevel = new Map();
-  const positions = new Map();
-  let maxLane = 0;
+  const activitiesByLevel = new Map();
   let maxLevel = 0;
-
   schedule.forEach(activity => {
     const level = levelById.get(activity.id);
-    const lane = laneByLevel.get(level) || 0;
-    laneByLevel.set(level, lane + 1);
-    positions.set(activity.id, { level, lane });
-    maxLane = Math.max(maxLane, lane);
+    if (!activitiesByLevel.has(level)) activitiesByLevel.set(level, []);
+    activitiesByLevel.get(level).push(activity);
     maxLevel = Math.max(maxLevel, level);
   });
+
+  for (let level = 0; level <= maxLevel; level++) {
+    const activities = activitiesByLevel.get(level) || [];
+    activities.sort(comparePertActivitiesBySourceOrder_);
+    activitiesByLevel.set(level, activities);
+  }
+
+  let laneById = createPertLaneMap_(activitiesByLevel, maxLevel);
+  for (let level = 1; level <= maxLevel; level++) {
+    sortPertLevelByNeighborLanes_(activitiesByLevel.get(level), laneById, 'predecessors');
+    laneById = createPertLaneMap_(activitiesByLevel, maxLevel);
+  }
+
+  for (let level = maxLevel - 1; level >= 0; level--) {
+    sortPertLevelByNeighborLanes_(activitiesByLevel.get(level), laneById, 'successors');
+    laneById = createPertLaneMap_(activitiesByLevel, maxLevel);
+  }
+
+  const positions = new Map();
+  let maxLane = 0;
+  for (let level = 0; level <= maxLevel; level++) {
+    const activities = activitiesByLevel.get(level) || [];
+    activities.forEach((activity, lane) => {
+      positions.set(activity.id, { level, lane });
+      maxLane = Math.max(maxLane, lane);
+    });
+  }
 
   return { positions, maxLane, maxLevel };
 }
 
+function createPertLaneMap_(activitiesByLevel, maxLevel) {
+  const laneById = new Map();
+  for (let level = 0; level <= maxLevel; level++) {
+    (activitiesByLevel.get(level) || []).forEach((activity, lane) => laneById.set(activity.id, lane));
+  }
+  return laneById;
+}
+
+function sortPertLevelByNeighborLanes_(activities, laneById, neighborKey) {
+  if (!activities || activities.length < 2) return;
+
+  activities.sort((a, b) => {
+    const laneDelta = getAveragePertNeighborLane_(a, laneById, neighborKey) - getAveragePertNeighborLane_(b, laneById, neighborKey);
+    if (laneDelta !== 0) return laneDelta;
+    return comparePertActivitiesBySourceOrder_(a, b);
+  });
+}
+
+function getAveragePertNeighborLane_(activity, laneById, neighborKey) {
+  const neighborLanes = activity[neighborKey]
+    .map(id => laneById.get(id))
+    .filter(lane => lane !== undefined);
+
+  if (neighborLanes.length === 0) return activity.sourceRow || 0;
+  return neighborLanes.reduce((sum, lane) => sum + lane, 0) / neighborLanes.length;
+}
+
+function comparePertActivitiesBySourceOrder_(a, b) {
+  const sourceDelta = (a.sourceRow || 0) - (b.sourceRow || 0);
+  if (sourceDelta !== 0) return sourceDelta;
+  return String(a.id).localeCompare(String(b.id));
+}
+
 function renderPertNode_(pert, row, col, activity) {
   const nodeRange = pert.getRange(row, col, 3, 3);
+  const background = activity.isPertMilestone ? '#eaf2f8' : '#ffffff';
+  const fontColor = activity.isPertMilestone ? '#1f4e79' : '#000000';
   breakApartOverlappingMergedRanges_(nodeRange);
   nodeRange
     .setValues([
@@ -531,8 +635,8 @@ function renderPertNode_(pert, row, col, activity) {
     .setWrap(true)
     .setVerticalAlignment('middle')
     .setHorizontalAlignment('center')
-    .setBackground('#ffffff')
-    .setFontColor('#000000')
+    .setBackground(background)
+    .setFontColor(fontColor)
     .setBorder(true, true, true, true, true, true, '#000000', SpreadsheetApp.BorderStyle.SOLID);
 
   const activityRange = pert.getRange(row + 1, col, 1, 3);
@@ -543,7 +647,8 @@ function renderPertNode_(pert, row, col, activity) {
     .setFontWeight('bold')
     .setVerticalAlignment('middle')
     .setHorizontalAlignment('center')
-    .setBackground('#ffffff')
+    .setBackground(background)
+    .setFontColor(fontColor)
     .setBorder(true, true, true, true, null, null, '#000000', SpreadsheetApp.BorderStyle.SOLID);
 }
 
@@ -909,7 +1014,7 @@ function renderPertLegend_(pert, rowsNeeded, columnsNeeded) {
   breakApartOverlappingMergedRanges_(legendDescriptionRange);
   legendDescriptionRange
     .mergeAcross()
-    .setValue('Top: ES | Duration | EF; Middle: Activity; Bottom: LS | Slack | LF')
+    .setValue('Top: ES | Duration | EF; Middle: Activity; Bottom: LS | Slack | LF; Blue nodes: START/FINISH milestones')
     .setWrap(true);
 }
 
