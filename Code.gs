@@ -27,6 +27,7 @@ const SCHED_FIRST_DATA_ROW = 4;
 const GANTT_FIRST_COLUMN = 9;
 const GANTT_CELL_SIZE_PX = 20;
 const PERT_NODE_ROW_SPACING = 8;
+const PERT_MIN_TERMINAL_ROW_SPACING = 10;
 const PERT_NODE_COLUMN_SPACING = 14;
 const PERT_NODE_HEIGHT = 3;
 const PERT_NODE_WIDTH = 3;
@@ -645,6 +646,8 @@ function buildPertLayout_(schedule) {
     });
   }
 
+  alignPertFinishMilestoneRow_(schedule, positions);
+
   return {
     positions,
     maxLane,
@@ -652,6 +655,24 @@ function buildPertLayout_(schedule) {
     maxRenderedLevel: Math.min(maxLevel, PERT_MAX_LEVELS_PER_ROW_BAND - 1),
     maxNodeRow: getMaxPertNodeRow_(positions),
   };
+}
+
+function alignPertFinishMilestoneRow_(schedule, positions) {
+  const finishPosition = positions.get(PERT_FINISH_MILESTONE_ID);
+  if (!finishPosition) return;
+
+  const finishActivity = schedule.find(activity => activity.id === PERT_FINISH_MILESTONE_ID);
+  if (!finishActivity || finishActivity.predecessors.length === 0) return;
+
+  const predecessorRows = finishActivity.predecessors
+    .map(predecessorId => positions.get(predecessorId))
+    .filter(position => position)
+    .map(position => position.rowOffset);
+
+  if (predecessorRows.length === 0) return;
+
+  const averagePredecessorRow = predecessorRows.reduce((sum, rowOffset) => sum + rowOffset, 0) / predecessorRows.length;
+  finishPosition.rowOffset = Math.max(0, Math.round(averagePredecessorRow / PERT_MIN_TERMINAL_ROW_SPACING) * PERT_MIN_TERMINAL_ROW_SPACING);
 }
 
 function buildPertLevelMap_(schedule) {
@@ -925,10 +946,39 @@ function canRenderPertArrowImage_(width, height) {
 
 function createPertArrowPngBlob_(width, height, startX, startY, endX, endY) {
   const rgba = createTransparentRgbaBuffer_(width, height);
-  drawPertPngLine_(rgba, width, height, startX, startY, endX, endY, 4);
-  drawPertPngArrowHead_(rgba, width, height, startX, startY, endX, endY, 14, 10);
+  const routePoints = getPertArrowImageRoutePoints_(startX, startY, endX, endY);
+
+  for (let index = 0; index < routePoints.length - 1; index++) {
+    drawPertPngLine_(
+      rgba,
+      width,
+      height,
+      routePoints[index].x,
+      routePoints[index].y,
+      routePoints[index + 1].x,
+      routePoints[index + 1].y,
+      4
+    );
+  }
+
+  const arrowStartPoint = routePoints[Math.max(0, routePoints.length - 2)];
+  drawPertPngArrowHead_(rgba, width, height, arrowStartPoint.x, arrowStartPoint.y, endX, endY, 14, 10);
 
   return Utilities.newBlob(createPngBytes_(width, height, rgba), 'image/png', 'pert-arrow.png');
+}
+
+function getPertArrowImageRoutePoints_(startX, startY, endX, endY) {
+  if (Math.abs(endY - startY) < 1) {
+    return [{ x: startX, y: startY }, { x: endX, y: endY }];
+  }
+
+  const bendX = Math.round(startX + (endX - startX) / 2);
+  return [
+    { x: startX, y: startY },
+    { x: bendX, y: startY },
+    { x: bendX, y: endY },
+    { x: endX, y: endY },
+  ];
 }
 
 function createTransparentRgbaBuffer_(width, height) {
