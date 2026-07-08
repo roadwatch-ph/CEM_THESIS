@@ -30,10 +30,14 @@ const PERT_NODE_ROW_SPACING = 5;
 const PERT_NODE_COLUMN_SPACING = 7;
 const PERT_NODE_HEIGHT = 3;
 const PERT_NODE_WIDTH = 3;
-const PERT_ARROW_COLOR = '#000000';
+const PERT_ARROW_COLOR = '#4285F4';
 const PERT_ARROW_FONT_SIZE = 16;
 const PERT_ARROW_START_PADDING = 1;
 const PERT_ARROW_END_PADDING = 1;
+const PERT_ARROW_IMAGE_ALT_TEXT = 'Generated PERT dependency arrow';
+const PERT_CELL_WIDTH_PX = 80;
+const PERT_CELL_HEIGHT_PX = 28;
+const PERT_ARROW_IMAGE_PADDING_PX = 8;
 const DEFAULT_WBS_SHEET_NAME = 'WBS';
 const DEFAULT_SCHED_SHEET_NAME = 'Scheduling';
 const DEFAULT_PERT_SHEET_NAME = 'PERT Diagram';
@@ -447,8 +451,9 @@ function renderPertDiagram_(pert, schedule) {
   const rowsNeeded = Math.max(8, 4 + layout.maxLane * PERT_NODE_ROW_SPACING + 4);
   const columnsNeeded = Math.max(10, 1 + (layout.maxLevel + 1) * PERT_NODE_COLUMN_SPACING);
   preparePertDiagramSheet_(pert, rowsNeeded, columnsNeeded);
+  resizePertCells_(pert, rowsNeeded, columnsNeeded);
 
-  renderPertArrows_(pert, schedule, layout, rowsNeeded, columnsNeeded);
+  renderPertArrows_(pert, schedule, layout);
 
   const pertTitleRange = pert.getRange(1, 1, 1, columnsNeeded);
   breakApartOverlappingMergedRanges_(pertTitleRange);
@@ -472,7 +477,6 @@ function renderPertDiagram_(pert, schedule) {
     renderPertNode_(pert, row, col, activity);
   });
   renderPertLegend_(pert, rowsNeeded, columnsNeeded);
-  resizePertCells_(pert, rowsNeeded, columnsNeeded);
 }
 
 function buildPertLayout_(schedule) {
@@ -537,10 +541,9 @@ function renderPertNode_(pert, row, col, activity) {
 }
 
 
-function renderPertArrows_(pert, schedule, layout, rowsNeeded, columnsNeeded) {
+function renderPertArrows_(pert, schedule, layout) {
   const activityById = new Map(schedule.map(activity => [activity.id, activity]));
   const incomingRouteIndexByTarget = new Map();
-  const arrowGrid = createPertArrowGrid_(rowsNeeded, columnsNeeded);
 
   schedule.forEach(activity => {
     activity.predecessors.forEach((predecessorId, predecessorIndex) => {
@@ -562,18 +565,69 @@ function renderPertArrows_(pert, schedule, layout, rowsNeeded, columnsNeeded) {
 
       const incomingIndex = incomingRouteIndexByTarget.get(successorId).get(activity.id) || 0;
       const incomingCount = Math.max(1, successor.predecessors.length);
-      drawPertSmartArrow_(arrowGrid, sourcePosition, targetPosition, successorIndex, incomingIndex, incomingCount);
+      renderPertImageArrow_(pert, sourcePosition, targetPosition, incomingIndex, incomingCount);
     });
   });
+}
 
-  const arrowRange = pert.getRange(1, 1, rowsNeeded, columnsNeeded);
-  arrowRange
-    .setValues(arrowGrid)
-    .setVerticalAlignment('middle')
-    .setHorizontalAlignment('center')
-    .setFontColor(PERT_ARROW_COLOR)
-    .setFontSize(PERT_ARROW_FONT_SIZE)
-    .setFontWeight('normal');
+function renderPertImageArrow_(pert, sourcePosition, targetPosition, incomingIndex, incomingCount) {
+  const startPoint = getPertArrowPixelStartPoint_(sourcePosition);
+  const endPoint = getPertArrowPixelEndPoint_(targetPosition, incomingIndex, incomingCount);
+  if (endPoint.x <= startPoint.x) return;
+
+  const minX = Math.min(startPoint.x, endPoint.x) - PERT_ARROW_IMAGE_PADDING_PX;
+  const minY = Math.min(startPoint.y, endPoint.y) - PERT_ARROW_IMAGE_PADDING_PX;
+  const maxX = Math.max(startPoint.x, endPoint.x) + PERT_ARROW_IMAGE_PADDING_PX;
+  const maxY = Math.max(startPoint.y, endPoint.y) + PERT_ARROW_IMAGE_PADDING_PX;
+  const imageWidth = Math.max(1, Math.ceil(maxX - minX));
+  const imageHeight = Math.max(1, Math.ceil(maxY - minY));
+  const svgStartX = startPoint.x - minX;
+  const svgStartY = startPoint.y - minY;
+  const svgEndX = endPoint.x - minX;
+  const svgEndY = endPoint.y - minY;
+  const svg = createPertArrowSvg_(imageWidth, imageHeight, svgStartX, svgStartY, svgEndX, svgEndY);
+  const blob = Utilities.newBlob(svg, 'image/svg+xml', 'pert-arrow.svg');
+  const anchorCol = Math.max(1, Math.floor(minX / PERT_CELL_WIDTH_PX) + 1);
+  const anchorRow = Math.max(1, Math.floor(minY / PERT_CELL_HEIGHT_PX) + 1);
+  const xOffset = Math.max(0, Math.round(minX - (anchorCol - 1) * PERT_CELL_WIDTH_PX));
+  const yOffset = Math.max(0, Math.round(minY - (anchorRow - 1) * PERT_CELL_HEIGHT_PX));
+
+  pert.insertImage(blob, anchorCol, anchorRow, xOffset, yOffset)
+    .setAltTextTitle(PERT_ARROW_IMAGE_ALT_TEXT)
+    .setWidth(imageWidth)
+    .setHeight(imageHeight);
+}
+
+function getPertArrowPixelStartPoint_(sourcePosition) {
+  const row = getPertNodeRow_(sourcePosition);
+  const col = getPertNodeColumn_(sourcePosition);
+  return {
+    x: (col - 1 + PERT_NODE_WIDTH) * PERT_CELL_WIDTH_PX,
+    y: (row - 1 + PERT_NODE_HEIGHT / 2) * PERT_CELL_HEIGHT_PX,
+  };
+}
+
+function getPertArrowPixelEndPoint_(targetPosition, incomingIndex, incomingCount) {
+  const row = getPertNodeRow_(targetPosition);
+  const col = getPertNodeColumn_(targetPosition);
+  const incomingRow = getPertIncomingArrowRow_(row, incomingIndex, incomingCount);
+  return {
+    x: (col - 1) * PERT_CELL_WIDTH_PX,
+    y: (incomingRow - 0.5) * PERT_CELL_HEIGHT_PX,
+  };
+}
+
+function createPertArrowSvg_(width, height, startX, startY, endX, endY) {
+  return [
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">`,
+    '<defs>',
+    `<marker id="arrowhead" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto" markerUnits="strokeWidth">`,
+    `<path d="M 0 0 L 10 5 L 0 10 z" fill="${PERT_ARROW_COLOR}"/>`,
+    '</marker>',
+    '</defs>',
+    `<line x1="${startX}" y1="${startY}" x2="${endX}" y2="${endY}" stroke="${PERT_ARROW_COLOR}" stroke-width="2" marker-end="url(#arrowhead)" stroke-linecap="round"/>`,
+    '</svg>',
+  ].join('');
 }
 
 function createPertArrowGrid_(rowsNeeded, columnsNeeded) {
@@ -989,6 +1043,7 @@ function ensureSheetSize_(sheet, requiredRows, requiredColumns) {
 }
 
 function preparePertDiagramSheet_(pert, requiredRows, requiredColumns) {
+  removeGeneratedPertArrowImages_(pert);
   ensureSheetSize_(pert, requiredRows, requiredColumns);
   clearSheetRange_(pert, requiredRows, requiredColumns);
   trimExtraRows_(pert, requiredRows);
@@ -996,9 +1051,18 @@ function preparePertDiagramSheet_(pert, requiredRows, requiredColumns) {
 }
 
 function clearPertDiagram_(pert) {
+  removeGeneratedPertArrowImages_(pert);
   clearSheetRange_(pert, Math.min(pert.getMaxRows(), 50), Math.min(pert.getMaxColumns(), 26));
   trimExtraRows_(pert, 50);
   trimExtraScheduleColumns_(pert, 26);
+}
+
+function removeGeneratedPertArrowImages_(pert) {
+  pert.getImages().forEach(image => {
+    if (image.getAltTextTitle && image.getAltTextTitle() === PERT_ARROW_IMAGE_ALT_TEXT) {
+      image.remove();
+    }
+  });
 }
 
 function clearSchedule_(sched) {
