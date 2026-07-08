@@ -27,7 +27,7 @@ const SCHED_FIRST_DATA_ROW = 4;
 const GANTT_FIRST_COLUMN = 9;
 const GANTT_CELL_SIZE_PX = 20;
 const PERT_NODE_ROW_SPACING = 8;
-const PERT_NODE_COLUMN_SPACING = 12;
+const PERT_NODE_COLUMN_SPACING = 14;
 const PERT_NODE_HEIGHT = 3;
 const PERT_NODE_WIDTH = 3;
 const PERT_ARROW_COLOR = '#000000';
@@ -539,7 +539,7 @@ function renderPertDiagram_(pert, schedule) {
   breakApartOverlappingMergedRanges_(pertDescriptionRange);
   pertDescriptionRange
     .mergeAcross()
-    .setValue('Each node shows ES, Duration, EF on top; Activity in the middle; and LS, Slack, LF on the bottom. Successor links use generated PNG arrow images that point directly into the next activity node.')
+    .setValue('Each node shows ES, Duration, EF on top; Activity in the middle; and LS, Slack, LF on the bottom. Successor links use clean generated PNG arrows with separate entry points for multiple predecessors.')
     .setHorizontalAlignment('center')
     .setWrap(true)
     .setBackground('#ddebf7');
@@ -774,10 +774,6 @@ function renderPertNode_(pert, row, col, activity) {
 function renderPertArrows_(pert, schedule, layout, rowsNeeded, columnsNeeded) {
   const activityById = new Map(schedule.map(activity => [activity.id, activity]));
   const incomingRouteIndexByTarget = new Map();
-  // Use cell-based connectors instead of inserted SVG blobs because Sheets does not
-  // consistently accept SVG image blobs and can throw "The blob format is unsupported."
-  const arrowGrid = createPertArrowGrid_(rowsNeeded, columnsNeeded);
-  const occupiedNodeCells = createPertOccupiedNodeCellSet_(layout.positions);
 
   schedule.forEach(activity => {
     activity.predecessors.forEach((predecessorId, predecessorIndex) => {
@@ -799,11 +795,9 @@ function renderPertArrows_(pert, schedule, layout, rowsNeeded, columnsNeeded) {
 
       const incomingIndex = incomingRouteIndexByTarget.get(successorId).get(activity.id) || 0;
       const incomingCount = Math.max(1, successor.predecessors.length);
-      drawPertSmartArrow_(arrowGrid, sourcePosition, targetPosition, successorIndex, incomingIndex, incomingCount, occupiedNodeCells);
+      renderPertImageArrow_(pert, sourcePosition, targetPosition, successorIndex, Math.max(1, activity.successors.length), incomingIndex, incomingCount);
     });
   });
-
-  renderPertArrowGrid_(pert, arrowGrid, rowsNeeded, columnsNeeded);
 }
 
 
@@ -839,8 +833,8 @@ function renderPertArrowGridInChunks_(pert, arrowGrid, rowsNeeded, columnsNeeded
   }
 }
 
-function renderPertImageArrow_(pert, sourcePosition, targetPosition, incomingIndex, incomingCount) {
-  const startPoint = getPertArrowPixelStartPoint_(sourcePosition);
+function renderPertImageArrow_(pert, sourcePosition, targetPosition, successorIndex, successorCount, incomingIndex, incomingCount) {
+  const startPoint = getPertArrowPixelStartPoint_(sourcePosition, successorIndex, successorCount);
   const endPoint = getPertArrowPixelEndPoint_(targetPosition, incomingIndex, incomingCount);
   if (endPoint.x <= startPoint.x) return;
 
@@ -1035,13 +1029,18 @@ function crc32Bytes_(bytes) {
   return (crc ^ 0xffffffff) >>> 0;
 }
 
-function getPertArrowPixelStartPoint_(sourcePosition) {
+function getPertArrowPixelStartPoint_(sourcePosition, successorIndex, successorCount) {
   const row = getPertNodeRow_(sourcePosition);
   const col = getPertNodeColumn_(sourcePosition);
+  const outgoingRow = getPertOutgoingArrowRow_(row, successorIndex || 0, successorCount || 1);
   return {
     x: (col - 1 + PERT_NODE_WIDTH) * PERT_CELL_WIDTH_PX,
-    y: (row - 1 + PERT_NODE_HEIGHT / 2) * PERT_CELL_HEIGHT_PX,
+    y: (outgoingRow - 0.5) * PERT_CELL_HEIGHT_PX,
   };
+}
+
+function getPertOutgoingArrowRow_(sourceRow, successorIndex, successorCount) {
+  return getPertDistributedNodeEdgeRow_(sourceRow, successorIndex, successorCount);
 }
 
 function getPertArrowPixelEndPoint_(targetPosition, incomingIndex, incomingCount) {
@@ -1158,15 +1157,19 @@ function getPertArrowEndPoint_(targetRow, targetCol, incomingIndex, incomingCoun
 }
 
 function getPertIncomingArrowRow_(targetRow, incomingIndex, incomingCount) {
-  if (incomingCount <= 1) return targetRow + Math.floor(PERT_NODE_HEIGHT / 2);
+  return getPertDistributedNodeEdgeRow_(targetRow, incomingIndex, incomingCount);
+}
+
+function getPertDistributedNodeEdgeRow_(nodeRow, routeIndex, routeCount) {
+  if (routeCount <= 1) return nodeRow + Math.floor(PERT_NODE_HEIGHT / 2);
 
   const availableOffsets = Array.from({ length: PERT_NODE_HEIGHT }, (_, index) => index);
-  if (incomingCount <= PERT_NODE_HEIGHT) {
-    const step = (PERT_NODE_HEIGHT - 1) / (incomingCount - 1);
-    return targetRow + Math.round(incomingIndex * step);
+  if (routeCount <= PERT_NODE_HEIGHT) {
+    const step = (PERT_NODE_HEIGHT - 1) / (routeCount - 1);
+    return nodeRow + Math.round(routeIndex * step);
   }
 
-  return targetRow + availableOffsets[incomingIndex % availableOffsets.length];
+  return nodeRow + availableOffsets[routeIndex % availableOffsets.length];
 }
 
 function renderPertOrthogonalSmartArrow_(pert, startPoint, endPoint, successorIndex, incomingIndex) {
