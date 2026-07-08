@@ -427,6 +427,8 @@ function renderPertDiagram_(pert, schedule) {
   ensureSheetSize_(pert, rowsNeeded, columnsNeeded);
   trimExtraScheduleColumns_(pert, columnsNeeded);
 
+  renderPertArrows_(pert, schedule, layout, rowsNeeded, columnsNeeded);
+
   const pertTitleRange = pert.getRange(1, 1, 1, columnsNeeded);
   breakApartOverlappingMergedRanges_(pertTitleRange);
   pertTitleRange
@@ -448,8 +450,6 @@ function renderPertDiagram_(pert, schedule) {
     const col = getPertNodeColumn_(position);
     renderPertNode_(pert, row, col, activity);
   });
-
-  renderPertArrows_(pert, schedule, layout);
   renderPertLegend_(pert, rowsNeeded, columnsNeeded);
   resizePertCells_(pert, rowsNeeded, columnsNeeded);
 }
@@ -516,9 +516,10 @@ function renderPertNode_(pert, row, col, activity) {
 }
 
 
-function renderPertArrows_(pert, schedule, layout) {
+function renderPertArrows_(pert, schedule, layout, rowsNeeded, columnsNeeded) {
   const activityById = new Map(schedule.map(activity => [activity.id, activity]));
   const incomingRouteIndexByTarget = new Map();
+  const arrowGrid = createPertArrowGrid_(rowsNeeded, columnsNeeded);
 
   schedule.forEach(activity => {
     activity.predecessors.forEach((predecessorId, predecessorIndex) => {
@@ -540,9 +541,49 @@ function renderPertArrows_(pert, schedule, layout) {
 
       const incomingIndex = incomingRouteIndexByTarget.get(successorId).get(activity.id) || 0;
       const incomingCount = Math.max(1, successor.predecessors.length);
-      renderPertSmartArrow_(pert, sourcePosition, targetPosition, successorIndex, incomingIndex, incomingCount);
+      drawPertSmartArrow_(arrowGrid, sourcePosition, targetPosition, successorIndex, incomingIndex, incomingCount);
     });
   });
+
+  const arrowRange = pert.getRange(1, 1, rowsNeeded, columnsNeeded);
+  arrowRange
+    .setValues(arrowGrid)
+    .setVerticalAlignment('middle')
+    .setHorizontalAlignment('center')
+    .setFontColor(PERT_ARROW_COLOR)
+    .setFontSize(PERT_ARROW_FONT_SIZE)
+    .setFontWeight('normal');
+}
+
+function createPertArrowGrid_(rowsNeeded, columnsNeeded) {
+  return Array.from({ length: rowsNeeded }, () => Array.from({ length: columnsNeeded }, () => ''));
+}
+
+function drawPertSmartArrow_(arrowGrid, sourcePosition, targetPosition, successorIndex, incomingIndex, incomingCount) {
+  const sourceRow = getPertNodeRow_(sourcePosition);
+  const sourceCol = getPertNodeColumn_(sourcePosition);
+  const targetRow = getPertNodeRow_(targetPosition);
+  const targetCol = getPertNodeColumn_(targetPosition);
+  const startPoint = getPertArrowStartPoint_(sourceRow, sourceCol);
+  const endPoint = getPertArrowEndPoint_(targetRow, targetCol, incomingIndex, incomingCount);
+
+  if (endPoint.col < startPoint.col) return;
+
+  const horizontalClearance = endPoint.col - startPoint.col;
+  const verticalDelta = endPoint.row - startPoint.row;
+
+  if (verticalDelta === 0) {
+    drawPertHorizontalArrowLine_(arrowGrid, startPoint.row, startPoint.col, endPoint.col);
+    return;
+  }
+
+  const canDrawCleanDiagonal = Math.abs(verticalDelta) <= horizontalClearance && horizontalClearance <= PERT_NODE_COLUMN_SPACING;
+  if (canDrawCleanDiagonal) {
+    drawPertDiagonalArrow_(arrowGrid, startPoint, endPoint);
+    return;
+  }
+
+  drawPertOrthogonalSmartArrow_(arrowGrid, startPoint, endPoint, successorIndex, incomingIndex);
 }
 
 function renderPertSmartArrow_(pert, sourcePosition, targetPosition, successorIndex, incomingIndex, incomingCount) {
@@ -611,6 +652,17 @@ function renderPertOrthogonalSmartArrow_(pert, startPoint, endPoint, successorIn
   renderPertArrowHead_(pert, endPoint.row, endPoint.col, '➜');
 }
 
+function drawPertOrthogonalSmartArrow_(arrowGrid, startPoint, endPoint, successorIndex, incomingIndex) {
+  const startSpacerCol = startPoint.col + PERT_ARROW_START_PADDING;
+  const endSpacerCol = endPoint.col - PERT_ARROW_END_PADDING;
+  const routeWidth = Math.max(1, endSpacerCol - startSpacerCol + 1);
+  const bendCol = Math.min(endSpacerCol, startSpacerCol + ((successorIndex + incomingIndex) % routeWidth));
+
+  drawPertHorizontalConnector_(arrowGrid, startPoint.row, startPoint.col, bendCol);
+  drawPertVerticalConnector_(arrowGrid, bendCol, startPoint.row, endPoint.row);
+  drawPertHorizontalArrowLine_(arrowGrid, endPoint.row, bendCol, endPoint.col);
+}
+
 function renderPertDiagonalArrow_(pert, startPoint, endPoint) {
   const step = endPoint.row > startPoint.row ? 1 : -1;
   const glyph = step > 0 ? '╲' : '╱';
@@ -639,6 +691,33 @@ function renderPertDiagonalArrow_(pert, startPoint, endPoint) {
   }
 }
 
+function drawPertDiagonalArrow_(arrowGrid, startPoint, endPoint) {
+  const step = endPoint.row > startPoint.row ? 1 : -1;
+  const glyph = step > 0 ? '╲' : '╱';
+  const arrowGlyph = step > 0 ? '↘' : '↗';
+  const diagonalSteps = Math.abs(endPoint.row - startPoint.row);
+
+  if (diagonalSteps === 0) {
+    drawPertHorizontalArrowLine_(arrowGrid, startPoint.row, startPoint.col, endPoint.col);
+    return;
+  }
+
+  for (let stepIndex = 0; stepIndex < diagonalSteps; stepIndex++) {
+    const row = startPoint.row + stepIndex * step;
+    const col = startPoint.col + stepIndex;
+    setPertArrowGlyph_(arrowGrid, row, col, glyph);
+  }
+
+  const arrowCol = Math.min(endPoint.col, startPoint.col + diagonalSteps);
+
+  if (arrowCol < endPoint.col) {
+    setPertArrowGlyph_(arrowGrid, endPoint.row, arrowCol, glyph);
+    drawPertHorizontalArrowLine_(arrowGrid, endPoint.row, arrowCol, endPoint.col);
+  } else {
+    setPertArrowGlyph_(arrowGrid, endPoint.row, arrowCol, arrowGlyph);
+  }
+}
+
 function getPertNodeRow_(position) {
   return 4 + position.lane * PERT_NODE_ROW_SPACING;
 }
@@ -653,6 +732,14 @@ function renderPertHorizontalArrowLine_(pert, row, startCol, arrowHeadCol) {
   }
 }
 
+function drawPertHorizontalArrowLine_(arrowGrid, row, startCol, arrowHeadCol) {
+  if (arrowHeadCol > startCol) {
+    drawPertHorizontalConnector_(arrowGrid, row, startCol, arrowHeadCol - 1);
+  }
+
+  setPertArrowGlyph_(arrowGrid, row, arrowHeadCol, '➜');
+}
+
 function renderPertHorizontalConnector_(pert, row, startCol, endCol) {
   if (endCol < startCol) return;
 
@@ -663,6 +750,12 @@ function renderPertHorizontalConnector_(pert, row, startCol, endCol) {
     .setBorder(true, null, null, null, false, false, PERT_ARROW_COLOR, SpreadsheetApp.BorderStyle.SOLID_MEDIUM);
 }
 
+function drawPertHorizontalConnector_(arrowGrid, row, startCol, endCol) {
+  for (let col = startCol; col <= endCol; col++) {
+    setPertArrowGlyph_(arrowGrid, row, col, '─');
+  }
+}
+
 function renderPertVerticalConnector_(pert, col, startRow, endRow) {
   const topRow = Math.min(startRow, endRow);
   const rowCount = Math.abs(endRow - startRow) + 1;
@@ -671,6 +764,35 @@ function renderPertVerticalConnector_(pert, col, startRow, endRow) {
   connectorRange
     .clearContent()
     .setBorder(null, true, null, null, false, false, PERT_ARROW_COLOR, SpreadsheetApp.BorderStyle.SOLID_MEDIUM);
+}
+
+function drawPertVerticalConnector_(arrowGrid, col, startRow, endRow) {
+  const topRow = Math.min(startRow, endRow);
+  const bottomRow = Math.max(startRow, endRow);
+
+  for (let row = topRow; row <= bottomRow; row++) {
+    setPertArrowGlyph_(arrowGrid, row, col, '│');
+  }
+}
+
+function setPertArrowGlyph_(arrowGrid, row, col, glyph) {
+  const rowIndex = row - 1;
+  const colIndex = col - 1;
+
+  if (rowIndex < 0 || rowIndex >= arrowGrid.length) return;
+  if (colIndex < 0 || colIndex >= arrowGrid[rowIndex].length) return;
+
+  const existingGlyph = arrowGrid[rowIndex][colIndex];
+  arrowGrid[rowIndex][colIndex] = mergePertArrowGlyphs_(existingGlyph, glyph);
+}
+
+function mergePertArrowGlyphs_(existingGlyph, newGlyph) {
+  if (!existingGlyph || existingGlyph === newGlyph) return newGlyph;
+  if (existingGlyph === '➜' || existingGlyph === '↗' || existingGlyph === '↘') return existingGlyph;
+  if (newGlyph === '➜' || newGlyph === '↗' || newGlyph === '↘') return newGlyph;
+  if ((existingGlyph === '─' && newGlyph === '│') || (existingGlyph === '│' && newGlyph === '─')) return '┼';
+  if (existingGlyph === '┼') return existingGlyph;
+  return newGlyph;
 }
 
 function renderPertDiagonalConnector_(pert, row, col, glyph) {
