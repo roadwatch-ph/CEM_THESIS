@@ -63,8 +63,19 @@ const PERT_SHEET_ID_PROPERTY_PREFIX = 'pertSheetIdForWbs_';
 const MAX_SHEET_NAME_LENGTH = 100;
 const SCHEDULE_GENERATION_LOCK_TIMEOUT_MS = 25000;
 const SCHEDULE_GENERATION_BUSY_MESSAGE = 'Schedule generation is already running. Please wait a moment, then try again.';
+const PARALLEL_SCHEDULE_TRIGGER_HANDLER = 'runQueuedWbsScheduleGeneration_';
+const PARALLEL_SCHEDULE_QUEUE_PROPERTY_PREFIX = 'parallelScheduleWbsQueue_';
+const PARALLEL_SCHEDULE_SPREADSHEET_ID_PROPERTY = 'parallelScheduleSpreadsheetId';
 
 function generateSchedule() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+
+  if (!queueParallelScheduleGenerationForSpreadsheet_(ss)) {
+    throw new Error(`Missing WBS sheet. Create a sheet with "WBS" in the tab name.`);
+  }
+}
+
+function generateScheduleSequential() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
 
   if (!generateScheduleForSpreadsheet_(ss)) {
@@ -101,6 +112,115 @@ function generateScheduleForSpreadsheet_(ss, options) {
     wbsSheets.forEach(wbs => generateScheduleForWbsSheet_(ss, wbs));
     return true;
   }, options);
+}
+
+function queueParallelScheduleGenerationForSpreadsheet_(ss) {
+  const wbsSheets = getWbsSheets_(ss);
+  if (wbsSheets.length === 0) return false;
+
+  const properties = PropertiesService.getDocumentProperties();
+  properties.setProperty(PARALLEL_SCHEDULE_SPREADSHEET_ID_PROPERTY, ss.getId());
+  clearParallelScheduleQueue_();
+  deleteParallelScheduleTriggers_();
+
+  wbsSheets.forEach(wbs => {
+    properties.setProperty(getParallelScheduleQueuePropertyKey_(wbs.getSheetId()), 'PENDING');
+    ScriptApp.newTrigger(PARALLEL_SCHEDULE_TRIGGER_HANDLER)
+      .timeBased()
+      .after(1)
+      .create();
+  });
+
+  return true;
+}
+
+function runQueuedWbsScheduleGeneration_(e) {
+  const claim = claimNextQueuedWbsSchedule_();
+  if (!claim) {
+    deleteCurrentParallelScheduleTrigger_(e);
+    return;
+  }
+
+  try {
+    const ss = SpreadsheetApp.openById(claim.spreadsheetId);
+    const wbs = ss.getSheetById(claim.wbsSheetId);
+
+    if (wbs && isWbsSheetName_(wbs.getName())) {
+      generateScheduleForWbsSheet_(ss, wbs);
+    }
+  } finally {
+    PropertiesService.getDocumentProperties().deleteProperty(claim.propertyKey);
+    deleteCurrentParallelScheduleTrigger_(e);
+  }
+}
+
+function claimNextQueuedWbsSchedule_() {
+  const lock = LockService.getDocumentLock();
+  if (!lock.tryLock(SCHEDULE_GENERATION_LOCK_TIMEOUT_MS)) {
+    throw new Error(SCHEDULE_GENERATION_BUSY_MESSAGE);
+  }
+
+  try {
+    const properties = PropertiesService.getDocumentProperties();
+    const spreadsheetId = properties.getProperty(PARALLEL_SCHEDULE_SPREADSHEET_ID_PROPERTY);
+    const allProperties = properties.getProperties();
+    const propertyKey = Object.keys(allProperties).find(key => {
+      return key.indexOf(PARALLEL_SCHEDULE_QUEUE_PROPERTY_PREFIX) === 0 && allProperties[key] === 'PENDING';
+    });
+
+    if (!spreadsheetId || !propertyKey) return null;
+
+    properties.setProperty(propertyKey, 'RUNNING');
+    return {
+      spreadsheetId,
+      propertyKey,
+      wbsSheetId: Number(propertyKey.slice(PARALLEL_SCHEDULE_QUEUE_PROPERTY_PREFIX.length))
+    };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function clearParallelScheduleQueue_() {
+  const properties = PropertiesService.getDocumentProperties();
+  const allProperties = properties.getProperties();
+
+  Object.keys(allProperties).forEach(key => {
+    if (key.indexOf(PARALLEL_SCHEDULE_QUEUE_PROPERTY_PREFIX) === 0) {
+      properties.deleteProperty(key);
+    }
+  });
+}
+
+function getParallelScheduleQueuePropertyKey_(wbsSheetId) {
+  return `${PARALLEL_SCHEDULE_QUEUE_PROPERTY_PREFIX}${wbsSheetId}`;
+}
+
+function deleteParallelScheduleTriggers_() {
+  ScriptApp.getProjectTriggers().forEach(trigger => {
+    if (trigger.getHandlerFunction() === PARALLEL_SCHEDULE_TRIGGER_HANDLER) {
+      ScriptApp.deleteTrigger(trigger);
+    }
+  });
+}
+
+function deleteCurrentParallelScheduleTrigger_(e) {
+  const eventUid = e && e.triggerUid ? e.triggerUid : null;
+  const triggers = ScriptApp.getProjectTriggers().filter(trigger => {
+    return trigger.getHandlerFunction() === PARALLEL_SCHEDULE_TRIGGER_HANDLER;
+  });
+
+  if (eventUid) {
+    const currentTrigger = triggers.find(trigger => trigger.getUniqueId && trigger.getUniqueId() === eventUid);
+    if (currentTrigger) {
+      ScriptApp.deleteTrigger(currentTrigger);
+      return;
+    }
+  }
+
+  if (triggers.length > 0) {
+    ScriptApp.deleteTrigger(triggers[0]);
+  }
 }
 
 function generateScheduleForWbsSheetWithLock_(ss, wbs, options) {
@@ -1816,7 +1936,8 @@ function onOpen(e) {
 function addPertDiagramMenu_() {
   SpreadsheetApp.getUi()
     .createMenu('PERT Tools')
-    .addItem('Generate Scheduling and PERT Sheets', 'generateSchedule')
+    .addItem('Generate Scheduling and PERT Sheets in Parallel', 'generateSchedule')
+    .addItem('Generate Scheduling and PERT Sheets Sequentially', 'generateScheduleSequential')
     .addItem('Install Auto Schedule Trigger', 'installAutoScheduleTrigger')
     .addToUi();
 }
