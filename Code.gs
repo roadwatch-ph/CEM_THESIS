@@ -452,6 +452,7 @@ function truncateSheetName_(sheetName) {
 function parseAndValidateWbs_(rows, wbsSheetName) {
   const activities = [];
   const idSet = new Set();
+  const idByCanonicalId = new Map();
   const errors = [];
 
   rows.forEach((row, index) => {
@@ -460,27 +461,37 @@ function parseAndValidateWbs_(rows, wbsSheetName) {
     if (isBlankWbsRow_(row)) return;
 
     const id = normalizeId_(row[0]);
+    const canonicalId = canonicalizeActivityId_(id);
     const name = String(row[1] || '').trim();
     const predecessors = parsePredecessors_(row[2]);
     const duration = Number(row[3]);
 
     if (!id) errors.push(`${wbsSheetName} row ${sheetRow}: missing Activity.`);
-    if (id && idSet.has(id)) errors.push(`${wbsSheetName} row ${sheetRow}: duplicate Activity "${id}".`);
+    if (id && idSet.has(canonicalId)) errors.push(`${wbsSheetName} row ${sheetRow}: duplicate Activity "${id}".`);
     if (!name) errors.push(`${wbsSheetName} row ${sheetRow}: missing Activity Description.`);
     if (!Number.isFinite(duration) || duration <= 0) {
       errors.push(`${wbsSheetName} row ${sheetRow}: Duration must be a positive number.`);
     }
 
-    if (id) idSet.add(id);
+    if (id) {
+      idSet.add(canonicalId);
+      if (!idByCanonicalId.has(canonicalId)) idByCanonicalId.set(canonicalId, id);
+    }
     activities.push({ id, name, predecessors, duration, sourceRow: sheetRow });
   });
 
   activities.forEach(activity => {
+    activity.predecessors = activity.predecessors.map(predecessor => {
+      const canonicalPredecessor = canonicalizeActivityId_(predecessor);
+      return idByCanonicalId.get(canonicalPredecessor) || predecessor;
+    });
+
     activity.predecessors.forEach(predecessor => {
-      if (!idSet.has(predecessor)) {
+      const canonicalPredecessor = canonicalizeActivityId_(predecessor);
+      if (!idSet.has(canonicalPredecessor)) {
         errors.push(`${wbsSheetName} row ${activity.sourceRow}: invalid predecessor "${predecessor}" for Activity "${activity.id}".`);
       }
-      if (predecessor === activity.id) {
+      if (canonicalPredecessor === canonicalizeActivityId_(activity.id)) {
         errors.push(`${wbsSheetName} row ${activity.sourceRow}: activity cannot be its own predecessor.`);
       }
     });
@@ -2119,6 +2130,10 @@ function clearSheetRange_(sheet, rows, cols) {
 
 function normalizeId_(value) {
   return String(value || '').trim();
+}
+
+function canonicalizeActivityId_(value) {
+  return normalizeId_(value).toUpperCase();
 }
 
 function isBlankWbsRow_(row) {
