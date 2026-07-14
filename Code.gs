@@ -66,6 +66,9 @@ const SCHEDULE_GENERATION_BUSY_MESSAGE = 'Schedule generation is already running
 const PARALLEL_SCHEDULE_TRIGGER_HANDLER = 'runQueuedWbsScheduleGeneration_';
 const PARALLEL_SCHEDULE_QUEUE_PROPERTY_PREFIX = 'parallelScheduleWbsQueue_';
 const PARALLEL_SCHEDULE_SPREADSHEET_ID_PROPERTY = 'parallelScheduleSpreadsheetId';
+const PARALLEL_SCHEDULE_BATCH_TIME_LIMIT_MS = 4 * 60 * 1000;
+const PARALLEL_SCHEDULE_MAX_WBS_PER_RUN = 3;
+const PARALLEL_SCHEDULE_TRIGGER_DELAY_MS = 1000;
 
 function generateSchedule() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -125,38 +128,48 @@ function queueParallelScheduleGenerationForSpreadsheet_(ss) {
 
   wbsSheets.forEach(wbs => {
     properties.setProperty(getParallelScheduleQueuePropertyKey_(wbs.getSheetId()), 'PENDING');
-    ScriptApp.newTrigger(PARALLEL_SCHEDULE_TRIGGER_HANDLER)
-      .timeBased()
-      .after(1)
-      .create();
   });
 
+  scheduleNextParallelScheduleTrigger_();
   return true;
 }
 
 function runQueuedWbsScheduleGeneration_(e) {
-  const claim = claimNextQueuedWbsSchedule_();
-  if (!claim) {
-    deleteCurrentParallelScheduleTrigger_(e);
-    return;
-  }
+  deleteCurrentParallelScheduleTrigger_(e);
 
-  try {
-    const ss = SpreadsheetApp.openById(claim.spreadsheetId);
-    const wbs = ss.getSheetById(claim.wbsSheetId);
+  const startedAt = Date.now();
+  let processedCount = 0;
 
-    if (wbs && isWbsSheetName_(wbs.getName())) {
-      generateScheduleForWbsSheet_(ss, wbs);
+  while (processedCount < PARALLEL_SCHEDULE_MAX_WBS_PER_RUN && Date.now() - startedAt < PARALLEL_SCHEDULE_BATCH_TIME_LIMIT_MS) {
+    const claim = claimNextQueuedWbsSchedule_({ skipIfBusy: true });
+    if (!claim) break;
+
+    try {
+      const ss = SpreadsheetApp.openById(claim.spreadsheetId);
+      const wbs = ss.getSheetById(claim.wbsSheetId);
+
+      if (wbs && isWbsSheetName_(wbs.getName())) {
+        generateScheduleForWbsSheet_(ss, wbs);
+      }
+    } finally {
+      PropertiesService.getDocumentProperties().deleteProperty(claim.propertyKey);
     }
-  } finally {
-    PropertiesService.getDocumentProperties().deleteProperty(claim.propertyKey);
-    deleteCurrentParallelScheduleTrigger_(e);
+
+    processedCount++;
   }
+
+  if (hasPendingParallelScheduleQueue_()) scheduleNextParallelScheduleTrigger_();
 }
 
-function claimNextQueuedWbsSchedule_() {
+function claimNextQueuedWbsSchedule_(options) {
   const lock = LockService.getDocumentLock();
-  if (!lock.tryLock(SCHEDULE_GENERATION_LOCK_TIMEOUT_MS)) {
+  const shouldSkipIfBusy = options && options.skipIfBusy;
+  const hasLock = shouldSkipIfBusy
+    ? lock.tryLock(1)
+    : lock.tryLock(SCHEDULE_GENERATION_LOCK_TIMEOUT_MS);
+
+  if (!hasLock) {
+    if (shouldSkipIfBusy) return null;
     throw new Error(SCHEDULE_GENERATION_BUSY_MESSAGE);
   }
 
@@ -194,6 +207,25 @@ function clearParallelScheduleQueue_() {
 
 function getParallelScheduleQueuePropertyKey_(wbsSheetId) {
   return `${PARALLEL_SCHEDULE_QUEUE_PROPERTY_PREFIX}${wbsSheetId}`;
+}
+
+function hasPendingParallelScheduleQueue_() {
+  const allProperties = PropertiesService.getDocumentProperties().getProperties();
+  return Object.keys(allProperties).some(key => {
+    return key.indexOf(PARALLEL_SCHEDULE_QUEUE_PROPERTY_PREFIX) === 0 && allProperties[key] === 'PENDING';
+  });
+}
+
+function scheduleNextParallelScheduleTrigger_() {
+  const hasExistingWorker = ScriptApp.getProjectTriggers().some(trigger => {
+    return trigger.getHandlerFunction() === PARALLEL_SCHEDULE_TRIGGER_HANDLER;
+  });
+  if (hasExistingWorker) return;
+
+  ScriptApp.newTrigger(PARALLEL_SCHEDULE_TRIGGER_HANDLER)
+    .timeBased()
+    .after(PARALLEL_SCHEDULE_TRIGGER_DELAY_MS)
+    .create();
 }
 
 function deleteParallelScheduleTriggers_() {
@@ -492,8 +524,7 @@ function topologicalSort_(activities) {
       inDegreeById.set(successorId, nextInDegree);
 
       if (nextInDegree === 0) {
-        queue.push(byId.get(successorId));
-        queue.sort(compareActivitiesBySourceOrder_);
+        insertSortedActivity_(queue, byId.get(successorId), compareActivitiesBySourceOrder_);
       }
     });
   }
@@ -509,6 +540,16 @@ function compareActivitiesBySourceOrder_(a, b) {
   const sourceDelta = (a.sourceRow || 0) - (b.sourceRow || 0);
   if (sourceDelta !== 0) return sourceDelta;
   return String(a.id).localeCompare(String(b.id));
+}
+
+function insertSortedActivity_(queue, activity, compareFunction) {
+  let insertIndex = queue.length;
+
+  while (insertIndex > 0 && compareFunction(queue[insertIndex - 1], activity) > 0) {
+    insertIndex--;
+  }
+
+  queue.splice(insertIndex, 0, activity);
 }
 
 function getDependencyCyclePath_(activities, successorsById) {
@@ -891,8 +932,7 @@ function buildPertLevelMap_(schedule) {
       inDegreeById.set(successorId, nextInDegree);
 
       if (nextInDegree === 0) {
-        queue.push(byId.get(successorId));
-        queue.sort(comparePertActivitiesBySourceOrder_);
+        insertSortedActivity_(queue, byId.get(successorId), comparePertActivitiesBySourceOrder_);
       }
     });
   }
