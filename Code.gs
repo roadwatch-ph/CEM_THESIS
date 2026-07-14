@@ -2,7 +2,7 @@
  * Generate validated construction schedules and Gantt charts from WBS sheets.
  *
  * Expected WBS columns:
- *   A: Activity
+ *   A: Activity ID (letters or numbers are supported)
  *   B: Activity Description
  *   C: Predecessor (dash/blank for none, comma-separated IDs for multiple)
  *   D: Duration
@@ -460,14 +460,16 @@ function parseAndValidateWbs_(rows, wbsSheetName) {
 
     if (isBlankWbsRow_(row)) return;
 
+    if (isWbsHeaderRow_(row)) return;
+
     const id = normalizeId_(row[0]);
     const canonicalId = canonicalizeActivityId_(id);
     const name = String(row[1] || '').trim();
     const predecessors = parsePredecessors_(row[2]);
     const duration = Number(row[3]);
 
-    if (!id) errors.push(`${wbsSheetName} row ${sheetRow}: missing Activity.`);
-    if (id && idSet.has(canonicalId)) errors.push(`${wbsSheetName} row ${sheetRow}: duplicate Activity "${id}".`);
+    if (!id) errors.push(`${wbsSheetName} row ${sheetRow}: missing Activity ID.`);
+    if (id && idSet.has(canonicalId)) errors.push(`${wbsSheetName} row ${sheetRow}: duplicate Activity ID "${id}".`);
     if (!name) errors.push(`${wbsSheetName} row ${sheetRow}: missing Activity Description.`);
     if (!Number.isFinite(duration) || duration <= 0) {
       errors.push(`${wbsSheetName} row ${sheetRow}: Duration must be a positive number.`);
@@ -489,7 +491,7 @@ function parseAndValidateWbs_(rows, wbsSheetName) {
     activity.predecessors.forEach(predecessor => {
       const canonicalPredecessor = canonicalizeActivityId_(predecessor);
       if (!idSet.has(canonicalPredecessor)) {
-        errors.push(`${wbsSheetName} row ${activity.sourceRow}: invalid predecessor "${predecessor}" for Activity "${activity.id}".`);
+        errors.push(`${wbsSheetName} row ${activity.sourceRow}: invalid predecessor "${predecessor}" for Activity ID "${activity.id}".`);
       }
       if (canonicalPredecessor === canonicalizeActivityId_(activity.id)) {
         errors.push(`${wbsSheetName} row ${activity.sourceRow}: activity cannot be its own predecessor.`);
@@ -679,7 +681,7 @@ function renderSchedule_(sched, schedule) {
   renderScheduleTitle_(sched);
 
   const tableHeaderRange = sched.getRange(SCHED_HEADER_ROW, 1, 1, 8);
-  tableHeaderRange.setValues([['Activity', 'Activity Description', 'Predecessor', 'Duration', 'Early Start', 'Early Finish', 'Late Start', 'Late Finish']]);
+  tableHeaderRange.setValues([['Activity ID', 'Activity Description', 'Predecessor', 'Duration', 'Early Start', 'Early Finish', 'Late Start', 'Late Finish']]);
   sched.getRange(SCHED_FIRST_DATA_ROW, 1, output.length, 8).setValues(output);
   sched.getRange(SCHED_FIRST_DATA_ROW, 1, output.length, 1).setHorizontalAlignment('center');
   sched.getRange(SCHED_FIRST_DATA_ROW, 3, output.length, 6).setHorizontalAlignment('center');
@@ -744,7 +746,7 @@ function renderPertDiagram_(pert, schedule) {
   breakApartOverlappingMergedRanges_(pertDescriptionRange);
   pertDescriptionRange
     .mergeAcross()
-    .setValue('Each node shows ES, Duration, EF on top; Activity in the middle; and LS, Slack, LF on the bottom. Arrows are rendered as spreadsheet-safe connectors with separate entry points for multiple predecessors.')
+    .setValue('Each node shows ES, Duration, EF on top; Activity ID in the middle; and LS, Slack, LF on the bottom. Arrows are rendered as spreadsheet-safe connectors with separate entry points for multiple predecessors.')
     .setHorizontalAlignment('center')
     .setWrap(true)
     .setBackground('#ddebf7');
@@ -1897,7 +1899,7 @@ function renderPertLegend_(pert, rowsNeeded, columnsNeeded) {
   breakApartOverlappingMergedRanges_(legendDescriptionRange);
   legendDescriptionRange
     .mergeAcross()
-    .setValue('Top: ES | Duration | EF; Middle: Activity; Bottom: LS | Slack | LF; Blue nodes: START/FINISH milestones; Light orange/red border: critical path')
+    .setValue('Top: ES | Duration | EF; Middle: Activity ID; Bottom: LS | Slack | LF; Blue nodes: START/FINISH milestones; Light orange/red border: critical path')
     .setWrap(true);
 }
 
@@ -2140,12 +2142,28 @@ function isBlankWbsRow_(row) {
   return row.every(value => normalizeId_(value) === '');
 }
 
+function isWbsHeaderRow_(row) {
+  const activityHeader = canonicalizeHeader_(row[0]);
+  const descriptionHeader = canonicalizeHeader_(row[1]);
+  const predecessorHeader = canonicalizeHeader_(row[2]);
+  const durationHeader = canonicalizeHeader_(row[3]);
+
+  return /^(ACTIVITY|ACTIVITYNO|ACTIVITYID)$/.test(activityHeader) &&
+    /^(ACTIVITY|ACTIVITIES|ACTIVITYDESCRIPTION|DESCRIPTION)$/.test(descriptionHeader) &&
+    /^PREDECESSORS?$/.test(predecessorHeader) &&
+    /^DURATIONS?$/.test(durationHeader);
+}
+
+function canonicalizeHeader_(value) {
+  return normalizeId_(value).toUpperCase().replace(/[^A-Z0-9]/g, '');
+}
+
 function parsePredecessors_(value) {
   const text = String(value || '').trim();
   if (!text || /^[-\u2013\u2014]$/.test(text)) return [];
 
   const predecessors = [];
-  text.split(',').forEach(part => {
+  text.split(/[;,\n]+/).forEach(part => {
     const token = normalizeId_(part);
     const rangeMatch = token.match(/^([A-Za-z]+|\d+)\s*[-\u2013\u2014]\s*([A-Za-z]+|\d+)$/);
 
@@ -2331,7 +2349,7 @@ function getPertDiagramWebAppHtml_() {
     </div>
     <div id="message"></div>
     <div id="canvasWrap"><svg id="diagram" role="img" aria-label="PERT diagram"></svg></div>
-    <div class="legend">Node format: ES | Duration | EF, Activity, LS | Slack | LF. Orange nodes are critical path activities; blue nodes are START/FINISH milestones.</div>
+    <div class="legend">Node format: ES | Duration | EF, Activity ID, LS | Slack | LF. Orange nodes are critical path activities; blue nodes are START/FINISH milestones.</div>
   </main>
 <script>
 let appData = null;
