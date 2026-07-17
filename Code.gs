@@ -1002,9 +1002,21 @@ function nudgePertRowsAwayFromDirectArrows_(schedule, positions) {
     const overlap = findPertDirectArrowBoxOverlap_(schedule, activityById, positions);
     if (!overlap) return;
 
+    if (shouldLiftPertSourceForDirectArrowOverlap_(overlap)) {
+      liftPertPositionWithinLevel_(positions, overlap.sourcePosition, PERT_ADAPTIVE_ROW_NUDGE);
+      continue;
+    }
+
     const positionToMove = choosePertEndpointPositionToClearOverlap_(overlap);
     nudgePertLevelRowsFrom_(positions, positionToMove, PERT_ADAPTIVE_ROW_NUDGE);
   }
+}
+
+function shouldLiftPertSourceForDirectArrowOverlap_(overlap) {
+  if (overlap.sourcePosition.rowOffset <= 0) return false;
+  if (overlap.targetId === PERT_FINISH_MILESTONE_ID) return true;
+
+  return overlap.targetPosition.level > overlap.sourcePosition.level;
 }
 
 function choosePertEndpointPositionToClearOverlap_(overlap) {
@@ -1145,6 +1157,8 @@ function findPertDirectArrowBoxOverlap_(schedule, activityById, positions) {
       const blockingNode = findPertNodeBlockingDirectArrow_(positions, activity.id, successorId, points.start, points.end);
       if (blockingNode) {
         return {
+          sourceId: activity.id,
+          targetId: successorId,
           sourcePosition,
           targetPosition,
           blockingNode,
