@@ -44,6 +44,7 @@ const PERT_ARROW_IMAGE_PADDING_PX = 4;
 const PERT_ARROW_IMAGE_NODE_GAP_PX = 16;
 const PERT_ARROW_BOX_CLEARANCE_PX = 8;
 const PERT_MAX_ARROW_BOX_AVOIDANCE_PASSES = 12;
+const PERT_MAX_ARROW_CROSSING_AVOIDANCE_PASSES = 12;
 const PERT_MAX_ARROW_IMAGE_PIXELS = 2500000;
 const PERT_MAX_ARROW_IMAGE_BYTES = 12000000;
 const PERT_MAX_LEVELS_PER_ROW_BAND = 120;
@@ -869,6 +870,7 @@ function buildPertLayout_(schedule) {
   expandPertRowsForArrowClearance_(schedule, positions);
   nudgePertRowsForFanClarity_(schedule, positions);
   nudgePertRowsAwayFromDirectArrows_(schedule, positions);
+  nudgePertRowsAwayFromDirectArrowCrossings_(schedule, positions);
 
   return {
     positions,
@@ -1021,6 +1023,100 @@ function choosePertEndpointPositionToClearOverlap_(overlap) {
   }
 
   return sourceDistance <= targetDistance ? sourcePosition : targetPosition;
+}
+
+
+function nudgePertRowsAwayFromDirectArrowCrossings_(schedule, positions) {
+  const activityById = new Map(schedule.map(activity => [activity.id, activity]));
+
+  for (let pass = 0; pass < PERT_MAX_ARROW_CROSSING_AVOIDANCE_PASSES; pass++) {
+    const crossing = findPertDirectArrowCrossing_(schedule, activityById, positions);
+    if (!crossing) return;
+
+    const positionToLift = choosePertEndpointPositionToLiftForCrossing_(crossing);
+    liftPertPositionWithinLevel_(positions, positionToLift, PERT_ADAPTIVE_ROW_NUDGE);
+  }
+}
+
+function findPertDirectArrowCrossing_(schedule, activityById, positions) {
+  const segments = buildPertDirectArrowSegments_(schedule, activityById, positions);
+
+  for (let firstIndex = 0; firstIndex < segments.length; firstIndex++) {
+    const first = segments[firstIndex];
+
+    for (let secondIndex = firstIndex + 1; secondIndex < segments.length; secondIndex++) {
+      const second = segments[secondIndex];
+      if (doPertArrowSegmentsShareEndpoint_(first, second)) continue;
+      if (!doPertLineSegmentsIntersect_(first.start, first.end, second.start, second.end)) continue;
+
+      return { first, second };
+    }
+  }
+
+  return null;
+}
+
+function buildPertDirectArrowSegments_(schedule, activityById, positions) {
+  const segments = [];
+
+  schedule.forEach(activity => {
+    const sourcePosition = positions.get(activity.id);
+    if (!sourcePosition) return;
+
+    activity.successors.forEach((successorId, successorIndex) => {
+      const successor = activityById.get(successorId);
+      const targetPosition = positions.get(successorId);
+      if (!successor || !targetPosition) return;
+
+      const points = getPertArrowPixelConnectionPoints_(
+        sourcePosition,
+        targetPosition,
+        successorIndex,
+        activity.successors.length,
+        successor.predecessors.indexOf(activity.id),
+        successor.predecessors.length
+      );
+      applyPertArrowEndpointGap_(points.start, points.end, PERT_ARROW_IMAGE_NODE_GAP_PX);
+
+      segments.push({
+        sourceId: activity.id,
+        targetId: successorId,
+        sourcePosition,
+        targetPosition,
+        start: points.start,
+        end: points.end,
+      });
+    });
+  });
+
+  return segments;
+}
+
+function doPertArrowSegmentsShareEndpoint_(first, second) {
+  return first.sourceId === second.sourceId ||
+    first.sourceId === second.targetId ||
+    first.targetId === second.sourceId ||
+    first.targetId === second.targetId;
+}
+
+function choosePertEndpointPositionToLiftForCrossing_(crossing) {
+  if (crossing.first.targetId === PERT_FINISH_MILESTONE_ID) return crossing.first.sourcePosition;
+  if (crossing.second.targetId === PERT_FINISH_MILESTONE_ID) return crossing.second.sourcePosition;
+
+  const candidates = [
+    crossing.first.sourcePosition,
+    crossing.first.targetPosition,
+    crossing.second.sourcePosition,
+    crossing.second.targetPosition,
+  ];
+
+  return candidates.reduce((lowestPosition, position) => {
+    return position.rowOffset > lowestPosition.rowOffset ? position : lowestPosition;
+  }, candidates[0]);
+}
+
+function liftPertPositionWithinLevel_(positions, anchorPosition, rowsToLift) {
+  anchorPosition.rowOffset = Math.max(0, anchorPosition.rowOffset - rowsToLift);
 }
 
 function findPertDirectArrowBoxOverlap_(schedule, activityById, positions) {
