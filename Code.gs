@@ -42,6 +42,7 @@ const PERT_CELL_WIDTH_PX = 80;
 const PERT_CELL_HEIGHT_PX = 28;
 const PERT_ARROW_IMAGE_PADDING_PX = 4;
 const PERT_ARROW_IMAGE_NODE_GAP_PX = 16;
+const PERT_ARROW_IMAGE_BEND_PADDING_PX = 24;
 const PERT_ARROW_BOX_CLEARANCE_PX = 8;
 const PERT_MAX_ARROW_BOX_AVOIDANCE_PASSES = 12;
 const PERT_MAX_ARROW_CROSSING_AVOIDANCE_PASSES = 12;
@@ -1489,20 +1490,21 @@ function renderPertImageArrow_(pert, sourcePosition, targetPosition, successorIn
   applyPertArrowEndpointGap_(startPoint, endPoint, PERT_ARROW_IMAGE_NODE_GAP_PX);
   if (Math.round(startPoint.x) === Math.round(endPoint.x) && Math.round(startPoint.y) === Math.round(endPoint.y)) return false;
 
-  const minX = Math.min(startPoint.x, endPoint.x) - PERT_ARROW_IMAGE_PADDING_PX;
-  const minY = Math.min(startPoint.y, endPoint.y) - PERT_ARROW_IMAGE_PADDING_PX;
-  const maxX = Math.max(startPoint.x, endPoint.x) + PERT_ARROW_IMAGE_PADDING_PX;
-  const maxY = Math.max(startPoint.y, endPoint.y) + PERT_ARROW_IMAGE_PADDING_PX;
+  const routePoints = getPertArrowPixelRoutePoints_(startPoint, endPoint);
+  const minX = Math.min(...routePoints.map(point => point.x)) - PERT_ARROW_IMAGE_PADDING_PX;
+  const minY = Math.min(...routePoints.map(point => point.y)) - PERT_ARROW_IMAGE_PADDING_PX;
+  const maxX = Math.max(...routePoints.map(point => point.x)) + PERT_ARROW_IMAGE_PADDING_PX;
+  const maxY = Math.max(...routePoints.map(point => point.y)) + PERT_ARROW_IMAGE_PADDING_PX;
   const imageWidth = Math.max(1, Math.ceil(maxX - minX));
   const imageHeight = Math.max(1, Math.ceil(maxY - minY));
   if (!canRenderPertArrowImage_(imageWidth, imageHeight)) return false;
 
   try {
-    const svgStartX = startPoint.x - minX;
-    const svgStartY = startPoint.y - minY;
-    const svgEndX = endPoint.x - minX;
-    const svgEndY = endPoint.y - minY;
-    const blob = createPertArrowPngBlob_(imageWidth, imageHeight, svgStartX, svgStartY, svgEndX, svgEndY);
+    const svgRoutePoints = routePoints.map(point => ({
+      x: point.x - minX,
+      y: point.y - minY,
+    }));
+    const blob = createPertArrowPngBlob_(imageWidth, imageHeight, svgRoutePoints);
     const anchorCol = Math.max(1, Math.floor(minX / PERT_CELL_WIDTH_PX) + 1);
     const anchorRow = Math.max(1, Math.floor(minY / PERT_CELL_HEIGHT_PX) + 1);
     const xOffset = Math.max(0, Math.round(minX - (anchorCol - 1) * PERT_CELL_WIDTH_PX));
@@ -1524,28 +1526,34 @@ function canRenderPertArrowImage_(width, height) {
   return pixelCount <= PERT_MAX_ARROW_IMAGE_PIXELS && estimatedPngBytes <= PERT_MAX_ARROW_IMAGE_BYTES;
 }
 
-function createPertArrowPngBlob_(width, height, startX, startY, endX, endY) {
+function createPertArrowPngBlob_(width, height, routePoints) {
   const rgba = createTransparentRgbaBuffer_(width, height);
 
-  drawPertPngLine_(
-    rgba,
-    width,
-    height,
-    startX,
-    startY,
-    endX,
-    endY,
-    PERT_ARROW_IMAGE_STROKE_WIDTH
-  );
+  for (let index = 1; index < routePoints.length; index++) {
+    const previousPoint = routePoints[index - 1];
+    const currentPoint = routePoints[index];
+    drawPertPngLine_(
+      rgba,
+      width,
+      height,
+      previousPoint.x,
+      previousPoint.y,
+      currentPoint.x,
+      currentPoint.y,
+      PERT_ARROW_IMAGE_STROKE_WIDTH
+    );
+  }
 
+  const arrowStartPoint = routePoints[Math.max(0, routePoints.length - 2)];
+  const arrowEndPoint = routePoints[routePoints.length - 1];
   drawPertPngArrowHead_(
     rgba,
     width,
     height,
-    startX,
-    startY,
-    endX,
-    endY,
+    arrowStartPoint.x,
+    arrowStartPoint.y,
+    arrowEndPoint.x,
+    arrowEndPoint.y,
     PERT_ARROW_IMAGE_HEAD_LENGTH,
     PERT_ARROW_IMAGE_HEAD_HALF_WIDTH
   );
@@ -1828,6 +1836,23 @@ function applyPertArrowEndpointGap_(startPoint, endPoint, gap) {
   startPoint.y += offsetY;
   endPoint.x -= offsetX;
   endPoint.y -= offsetY;
+}
+
+function getPertArrowPixelRoutePoints_(startPoint, endPoint) {
+  const horizontalGap = Math.abs(endPoint.x - startPoint.x);
+  const verticalGap = Math.abs(endPoint.y - startPoint.y);
+
+  if (horizontalGap < PERT_ARROW_IMAGE_BEND_PADDING_PX || verticalGap < PERT_ARROW_IMAGE_BEND_PADDING_PX) {
+    return [startPoint, endPoint];
+  }
+
+  const bendX = startPoint.x + (endPoint.x - startPoint.x) / 2;
+  return [
+    startPoint,
+    { x: bendX, y: startPoint.y },
+    { x: bendX, y: endPoint.y },
+    endPoint,
+  ];
 }
 
 function createPertArrowSvg_(width, height, startX, startY, endX, endY) {
@@ -2622,7 +2647,7 @@ function getPertWebAppData() {
             route.incomingCount
           );
           applyPertArrowEndpointGap_(points.start, points.end, PERT_ARROW_IMAGE_NODE_GAP_PX);
-          return points;
+          return { points: getPertArrowPixelRoutePoints_(points.start, points.end) };
         });
 
         return {
@@ -2714,7 +2739,7 @@ function renderDiagram(sheet) {
   svg.innerHTML = '<defs><marker id="arrow" markerWidth="12" markerHeight="12" refX="11" refY="6" orient="auto"><path d="M0,0 L12,6 L0,12 z" fill="#111827"/></marker></defs>';
   sheet.links.forEach(link => {
     const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-    path.setAttribute('d', 'M ' + link.start.x + ' ' + link.start.y + ' L ' + link.end.x + ' ' + link.end.y);
+    path.setAttribute('d', getLinkPath(link));
     path.setAttribute('fill', 'none');
     path.setAttribute('stroke', '#111827');
     path.setAttribute('stroke-width', '${PERT_WEB_ARROW_STROKE_WIDTH}');
@@ -2722,6 +2747,10 @@ function renderDiagram(sheet) {
     svg.appendChild(path);
   });
   sheet.activities.forEach(activity => svg.appendChild(createNode(activity)));
+}
+function getLinkPath(link) {
+  const points = link.points || [link.start, link.end];
+  return points.map((point, index) => (index === 0 ? 'M ' : 'L ') + point.x + ' ' + point.y).join(' ');
 }
 function createNode(activity) {
   const group = document.createElementNS('http://www.w3.org/2000/svg', 'g');
