@@ -42,6 +42,8 @@ const PERT_CELL_WIDTH_PX = 80;
 const PERT_CELL_HEIGHT_PX = 28;
 const PERT_ARROW_IMAGE_PADDING_PX = 4;
 const PERT_ARROW_IMAGE_NODE_GAP_PX = 16;
+const PERT_ARROW_BOX_CLEARANCE_PX = 8;
+const PERT_MAX_ARROW_BOX_AVOIDANCE_PASSES = 4;
 const PERT_MAX_ARROW_IMAGE_PIXELS = 2500000;
 const PERT_MAX_ARROW_IMAGE_BYTES = 12000000;
 const PERT_MAX_LEVELS_PER_ROW_BAND = 120;
@@ -857,6 +859,7 @@ function buildPertLayout_(schedule) {
   alignPertFinishMilestoneRow_(schedule, positions);
   expandPertRowsForArrowClearance_(schedule, positions);
   nudgePertRowsForFanClarity_(schedule, positions);
+  nudgePertRowsAwayFromDirectArrows_(schedule, positions);
 
   return {
     positions,
@@ -979,6 +982,120 @@ function nudgePertLevelRowsFrom_(positions, anchorPosition, rowsToAdd) {
     if (position.band !== anchorPosition.band || position.renderedLevel !== anchorPosition.renderedLevel) return;
     if (position.rowOffset >= anchorPosition.rowOffset) position.rowOffset += rowsToAdd;
   });
+}
+
+function nudgePertRowsAwayFromDirectArrows_(schedule, positions) {
+  const activityById = new Map(schedule.map(activity => [activity.id, activity]));
+
+  for (let pass = 0; pass < PERT_MAX_ARROW_BOX_AVOIDANCE_PASSES; pass++) {
+    const overlap = findPertDirectArrowBoxOverlap_(schedule, activityById, positions);
+    if (!overlap) return;
+
+    nudgePertLevelRowsFrom_(positions, overlap.position, PERT_ADAPTIVE_ROW_NUDGE);
+  }
+}
+
+function findPertDirectArrowBoxOverlap_(schedule, activityById, positions) {
+  for (let activityIndex = 0; activityIndex < schedule.length; activityIndex++) {
+    const activity = schedule[activityIndex];
+    const sourcePosition = positions.get(activity.id);
+    if (!sourcePosition) continue;
+
+    for (let successorIndex = 0; successorIndex < activity.successors.length; successorIndex++) {
+      const successorId = activity.successors[successorIndex];
+      const successor = activityById.get(successorId);
+      const targetPosition = positions.get(successorId);
+      if (!successor || !targetPosition) continue;
+
+      const points = getPertArrowPixelConnectionPoints_(
+        sourcePosition,
+        targetPosition,
+        successorIndex,
+        activity.successors.length,
+        successor.predecessors.indexOf(activity.id),
+        successor.predecessors.length
+      );
+
+      applyPertArrowEndpointGap_(points.start, points.end, PERT_ARROW_IMAGE_NODE_GAP_PX);
+
+      const blockingNode = findPertNodeBlockingDirectArrow_(positions, activity.id, successorId, points.start, points.end);
+      if (blockingNode) return blockingNode;
+    }
+  }
+
+  return null;
+}
+
+function findPertNodeBlockingDirectArrow_(positions, sourceId, targetId, startPoint, endPoint) {
+  let blockingNode = null;
+
+  positions.forEach((position, id) => {
+    if (blockingNode || id === sourceId || id === targetId) return;
+
+    const box = expandPertPixelBox_(getPertNodePixelBox_(position), PERT_ARROW_BOX_CLEARANCE_PX);
+    if (doesPertLineIntersectBox_(startPoint, endPoint, box)) {
+      blockingNode = { id, position };
+    }
+  });
+
+  return blockingNode;
+}
+
+function expandPertPixelBox_(box, padding) {
+  return {
+    left: box.left - padding,
+    top: box.top - padding,
+    right: box.right + padding,
+    bottom: box.bottom + padding,
+  };
+}
+
+function doesPertLineIntersectBox_(startPoint, endPoint, box) {
+  if (isPertPointInsideBox_(startPoint, box) || isPertPointInsideBox_(endPoint, box)) return true;
+
+  const corners = [
+    { x: box.left, y: box.top },
+    { x: box.right, y: box.top },
+    { x: box.right, y: box.bottom },
+    { x: box.left, y: box.bottom },
+  ];
+
+  for (let index = 0; index < corners.length; index++) {
+    const nextIndex = (index + 1) % corners.length;
+    if (doPertLineSegmentsIntersect_(startPoint, endPoint, corners[index], corners[nextIndex])) return true;
+  }
+
+  return false;
+}
+
+function isPertPointInsideBox_(point, box) {
+  return point.x >= box.left && point.x <= box.right && point.y >= box.top && point.y <= box.bottom;
+}
+
+function doPertLineSegmentsIntersect_(a, b, c, d) {
+  const direction1 = getPertLineDirection_(a, b, c);
+  const direction2 = getPertLineDirection_(a, b, d);
+  const direction3 = getPertLineDirection_(c, d, a);
+  const direction4 = getPertLineDirection_(c, d, b);
+
+  if (((direction1 > 0 && direction2 < 0) || (direction1 < 0 && direction2 > 0)) &&
+      ((direction3 > 0 && direction4 < 0) || (direction3 < 0 && direction4 > 0))) {
+    return true;
+  }
+
+  return direction1 === 0 && isPertPointOnLineSegment_(a, b, c) ||
+    direction2 === 0 && isPertPointOnLineSegment_(a, b, d) ||
+    direction3 === 0 && isPertPointOnLineSegment_(c, d, a) ||
+    direction4 === 0 && isPertPointOnLineSegment_(c, d, b);
+}
+
+function getPertLineDirection_(a, b, c) {
+  return (c.x - a.x) * (b.y - a.y) - (c.y - a.y) * (b.x - a.x);
+}
+
+function isPertPointOnLineSegment_(a, b, point) {
+  return point.x >= Math.min(a.x, b.x) && point.x <= Math.max(a.x, b.x) &&
+    point.y >= Math.min(a.y, b.y) && point.y <= Math.max(a.y, b.y);
 }
 
 function buildPertLevelMap_(schedule) {
@@ -1262,28 +1379,24 @@ function canRenderPertArrowImage_(width, height) {
 
 function createPertArrowPngBlob_(width, height, startX, startY, endX, endY) {
   const rgba = createTransparentRgbaBuffer_(width, height);
-  const routePoints = getPertArrowImageRoutePoints_(startX, startY, endX, endY);
 
-  for (let index = 0; index < routePoints.length - 1; index++) {
-    drawPertPngLine_(
-      rgba,
-      width,
-      height,
-      routePoints[index].x,
-      routePoints[index].y,
-      routePoints[index + 1].x,
-      routePoints[index + 1].y,
-      PERT_ARROW_IMAGE_STROKE_WIDTH
-    );
-  }
+  drawPertPngLine_(
+    rgba,
+    width,
+    height,
+    startX,
+    startY,
+    endX,
+    endY,
+    PERT_ARROW_IMAGE_STROKE_WIDTH
+  );
 
-  const arrowStartPoint = routePoints[Math.max(0, routePoints.length - 2)];
   drawPertPngArrowHead_(
     rgba,
     width,
     height,
-    arrowStartPoint.x,
-    arrowStartPoint.y,
+    startX,
+    startY,
     endX,
     endY,
     PERT_ARROW_IMAGE_HEAD_LENGTH,
@@ -1291,10 +1404,6 @@ function createPertArrowPngBlob_(width, height, startX, startY, endX, endY) {
   );
 
   return Utilities.newBlob(createPngBytes_(width, height, rgba), 'image/png', 'pert-arrow.png');
-}
-
-function getPertArrowImageRoutePoints_(startX, startY, endX, endY) {
-  return [{ x: startX, y: startY }, { x: endX, y: endY }];
 }
 
 function createTransparentRgbaBuffer_(width, height) {
