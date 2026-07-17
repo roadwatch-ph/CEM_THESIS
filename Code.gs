@@ -1876,11 +1876,6 @@ function drawPertSmartArrow_(arrowGrid, sourcePosition, targetPosition, successo
   const startPoint = getPertArrowStartPoint_(sourceRow, sourceCol);
   const endPoint = getPertArrowEndPoint_(targetRow, targetCol, incomingIndex, incomingCount);
 
-  if (endPoint.col < startPoint.col) {
-    drawPertWrappedArrow_(arrowGrid, startPoint, endPoint);
-    return;
-  }
-
   const verticalDelta = endPoint.row - startPoint.row;
 
   if (verticalDelta === 0 && !doesPertHorizontalRouteHitNode_(startPoint.row, startPoint.col, endPoint.col, occupiedNodeCells)) {
@@ -1888,12 +1883,7 @@ function drawPertSmartArrow_(arrowGrid, sourcePosition, targetPosition, successo
     return;
   }
 
-  if (canDrawPertDiagonalRoute_(arrowGrid, startPoint, endPoint, occupiedNodeCells)) {
-    drawPertDiagonalArrow_(arrowGrid, startPoint, endPoint);
-    return;
-  }
-
-  drawPertOrthogonalSmartArrow_(arrowGrid, startPoint, endPoint, successorIndex, incomingIndex, occupiedNodeCells);
+  drawPertStraightOrDiagonalArrow_(arrowGrid, startPoint, endPoint);
 }
 
 
@@ -2116,6 +2106,23 @@ function drawPertDiagonalArrow_(arrowGrid, startPoint, endPoint) {
   } else {
     setPertArrowGlyph_(arrowGrid, endPoint.row, arrowCol, arrowGlyph);
   }
+}
+
+function drawPertStraightOrDiagonalArrow_(arrowGrid, startPoint, endPoint) {
+  const rowDelta = endPoint.row - startPoint.row;
+  const colDelta = endPoint.col - startPoint.col;
+  const steps = Math.max(Math.abs(rowDelta), Math.abs(colDelta), 1);
+
+  for (let stepIndex = 0; stepIndex < steps; stepIndex++) {
+    const row = Math.round(startPoint.row + rowDelta * stepIndex / steps);
+    const col = Math.round(startPoint.col + colDelta * stepIndex / steps);
+    const nextRow = Math.round(startPoint.row + rowDelta * (stepIndex + 1) / steps);
+    const glyph = nextRow === row ? '━' : nextRow > row ? '╲' : '╱';
+    setPertArrowGlyph_(arrowGrid, row, col, glyph);
+  }
+
+  const arrowGlyph = rowDelta === 0 ? '▶' : rowDelta > 0 ? '↘' : '↗';
+  setPertArrowGlyph_(arrowGrid, endPoint.row, endPoint.col, arrowGlyph);
 }
 
 function getPertNodeRow_(position) {
