@@ -26,13 +26,13 @@ const SCHED_TIMELINE_DAYS_ROW = 3;
 const SCHED_FIRST_DATA_ROW = 4;
 const GANTT_FIRST_COLUMN = 9;
 const GANTT_CELL_SIZE_PX = 20;
-const PERT_NODE_ROW_SPACING = 8;
-const PERT_MIN_TERMINAL_ROW_SPACING = 12;
-const PERT_NODE_COLUMN_SPACING = 9;
+const PERT_NODE_ROW_SPACING = 6;
+const PERT_MIN_TERMINAL_ROW_SPACING = 8;
+const PERT_NODE_COLUMN_SPACING = 7;
 const PERT_NODE_HEIGHT = 3;
 const PERT_NODE_WIDTH = 3;
 const PERT_ARROW_COLOR = '#000000';
-const PERT_ARROW_FONT_SIZE = 16;
+const PERT_ARROW_FONT_SIZE = 12;
 const PERT_ARROW_START_PADDING = 2;
 const PERT_ARROW_END_PADDING = 2;
 const PERT_FIRST_NODE_ROW = 4;
@@ -41,16 +41,20 @@ const PERT_ARROW_IMAGE_ALT_TEXT = 'Generated PERT dependency arrow';
 const PERT_CELL_WIDTH_PX = 80;
 const PERT_CELL_HEIGHT_PX = 28;
 const PERT_ARROW_IMAGE_PADDING_PX = 4;
-const PERT_ARROW_IMAGE_NODE_GAP_PX = 24;
+const PERT_ARROW_IMAGE_NODE_GAP_PX = 16;
 const PERT_MAX_ARROW_IMAGE_PIXELS = 2500000;
 const PERT_MAX_ARROW_IMAGE_BYTES = 12000000;
 const PERT_MAX_LEVELS_PER_ROW_BAND = 120;
 const PERT_ROW_BAND_SPACING = 4;
-const PERT_MIN_CONNECTED_NODE_ROW_DELTA = 4;
+const PERT_MIN_CONNECTED_NODE_ROW_DELTA = 3;
 const PERT_MAX_DIRECT_ARROW_RENDER_CELLS = 200000;
 const PERT_MAX_IMAGE_ARROW_COUNT = 200;
 const PERT_IMAGE_ARROW_MAX_NODE_COUNT = 250;
 const PERT_USE_IMAGE_ARROWS = true;
+const PERT_ARROW_IMAGE_STROKE_WIDTH = 2;
+const PERT_ARROW_IMAGE_HEAD_LENGTH = 10;
+const PERT_ARROW_IMAGE_HEAD_HALF_WIDTH = 6;
+const PERT_WEB_ARROW_STROKE_WIDTH = 2;
 const DEFAULT_WBS_SHEET_NAME = 'WBS';
 const DEFAULT_SCHED_SHEET_NAME = 'Scheduling';
 const DEFAULT_PERT_SHEET_NAME = 'PERT Diagram';
@@ -1210,12 +1214,22 @@ function createPertArrowPngBlob_(width, height, startX, startY, endX, endY) {
       routePoints[index].y,
       routePoints[index + 1].x,
       routePoints[index + 1].y,
-      4
+      PERT_ARROW_IMAGE_STROKE_WIDTH
     );
   }
 
   const arrowStartPoint = routePoints[Math.max(0, routePoints.length - 2)];
-  drawPertPngArrowHead_(rgba, width, height, arrowStartPoint.x, arrowStartPoint.y, endX, endY, 14, 10);
+  drawPertPngArrowHead_(
+    rgba,
+    width,
+    height,
+    arrowStartPoint.x,
+    arrowStartPoint.y,
+    endX,
+    endY,
+    PERT_ARROW_IMAGE_HEAD_LENGTH,
+    PERT_ARROW_IMAGE_HEAD_HALF_WIDTH
+  );
 
   return Utilities.newBlob(createPngBytes_(width, height, rgba), 'image/png', 'pert-arrow.png');
 }
@@ -1509,7 +1523,7 @@ function createPertArrowSvg_(width, height, startX, startY, endX, endY) {
     `<path d="M 0 0 L 12 6 L 0 12 z" fill="${PERT_ARROW_COLOR}"/>`,
     '</marker>',
     '</defs>',
-    `<line x1="${startX}" y1="${startY}" x2="${endX}" y2="${endY}" stroke="${PERT_ARROW_COLOR}" stroke-width="4" marker-end="url(#arrowhead)" stroke-linecap="round"/>`,
+    `<line x1="${startX}" y1="${startY}" x2="${endX}" y2="${endY}" stroke="${PERT_ARROW_COLOR}" stroke-width="${PERT_ARROW_IMAGE_STROKE_WIDTH}" marker-end="url(#arrowhead)" stroke-linecap="round"/>`,
     '</svg>',
   ].join('');
 }
@@ -1819,7 +1833,7 @@ function renderPertHorizontalConnector_(pert, row, startCol, endCol) {
   breakApartOverlappingMergedRanges_(connectorRange);
   connectorRange
     .clearContent()
-    .setBorder(true, null, null, null, false, false, PERT_ARROW_COLOR, SpreadsheetApp.BorderStyle.SOLID_MEDIUM);
+    .setBorder(true, null, null, null, false, false, PERT_ARROW_COLOR, SpreadsheetApp.BorderStyle.SOLID);
 }
 
 function drawPertHorizontalConnector_(arrowGrid, row, startCol, endCol) {
@@ -1835,7 +1849,7 @@ function renderPertVerticalConnector_(pert, col, startRow, endRow) {
   breakApartOverlappingMergedRanges_(connectorRange);
   connectorRange
     .clearContent()
-    .setBorder(null, true, null, null, false, false, PERT_ARROW_COLOR, SpreadsheetApp.BorderStyle.SOLID_MEDIUM);
+    .setBorder(null, true, null, null, false, false, PERT_ARROW_COLOR, SpreadsheetApp.BorderStyle.SOLID);
 }
 
 function drawPertVerticalConnector_(arrowGrid, col, startRow, endRow) {
@@ -2388,7 +2402,7 @@ function renderDiagram(sheet) {
     path.setAttribute('d', 'M ' + link.start.x + ' ' + link.start.y + ' L ' + link.end.x + ' ' + link.end.y);
     path.setAttribute('fill', 'none');
     path.setAttribute('stroke', '#111827');
-    path.setAttribute('stroke-width', '3');
+    path.setAttribute('stroke-width', '${PERT_WEB_ARROW_STROKE_WIDTH}');
     path.setAttribute('marker-end', 'url(#arrow)');
     svg.appendChild(path);
   });
