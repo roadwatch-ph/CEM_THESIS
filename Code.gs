@@ -738,8 +738,6 @@ function renderPertDiagram_(pert, schedule) {
   preparePertDiagramSheet_(pert, rowsNeeded, columnsNeeded);
   resizePertCells_(pert, rowsNeeded, columnsNeeded);
 
-  renderPertArrows_(pert, pertActivities, layout, rowsNeeded, columnsNeeded);
-
   const pertTitleRange = pert.getRange(1, 1, 1, columnsNeeded);
   breakApartOverlappingMergedRanges_(pertTitleRange);
   pertTitleRange
@@ -759,13 +757,24 @@ function renderPertDiagram_(pert, schedule) {
     .setWrap(true)
     .setBackground('#ddebf7');
 
+  renderPertNodes_(pert, pertActivities, layout);
+
+  // Place nodes before creating dependency arrows so route generation is based on
+  // fixed box positions. Grid-based fallback arrows must be painted under the
+  // nodes because they update spreadsheet cells across the whole diagram.
+  const shouldRepaintNodes = renderPertArrows_(pert, pertActivities, layout, rowsNeeded, columnsNeeded);
+  if (shouldRepaintNodes) renderPertNodes_(pert, pertActivities, layout);
+
+  renderPertLegend_(pert, rowsNeeded, columnsNeeded);
+}
+
+function renderPertNodes_(pert, pertActivities, layout) {
   pertActivities.forEach(activity => {
     const position = layout.positions.get(activity.id);
     const row = getPertNodeRow_(position);
     const col = getPertNodeColumn_(position);
     renderPertNode_(pert, row, col, activity);
   });
-  renderPertLegend_(pert, rowsNeeded, columnsNeeded);
 }
 
 function addPertMilestones_(schedule) {
@@ -1220,7 +1229,7 @@ function renderPertNode_(pert, row, col, activity) {
 
 function renderPertArrows_(pert, schedule, layout, rowsNeeded, columnsNeeded) {
   const arrowRoutes = buildPertArrowRoutes_(schedule, layout);
-  if (arrowRoutes.length === 0) return;
+  if (arrowRoutes.length === 0) return false;
 
   const shouldUseImageArrows = shouldRenderPertImageArrows_(schedule, arrowRoutes);
   let fallbackArrowGrid = shouldUseImageArrows ? null : createPertArrowGrid_(rowsNeeded, columnsNeeded);
@@ -1248,7 +1257,10 @@ function renderPertArrows_(pert, schedule, layout, rowsNeeded, columnsNeeded) {
 
   if (fallbackArrowGrid) {
     renderPertArrowGrid_(pert, fallbackArrowGrid, rowsNeeded, columnsNeeded);
+    return true;
   }
+
+  return false;
 }
 
 function buildPertArrowRoutes_(schedule, layout) {
