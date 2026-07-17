@@ -47,6 +47,7 @@ const PERT_MAX_ARROW_IMAGE_BYTES = 12000000;
 const PERT_MAX_LEVELS_PER_ROW_BAND = 120;
 const PERT_ROW_BAND_SPACING = 4;
 const PERT_MIN_CONNECTED_NODE_ROW_DELTA = 3;
+const PERT_MIN_ARROW_CROSSING_ROW_DELTA = 2;
 const PERT_MAX_DIRECT_ARROW_RENDER_CELLS = 200000;
 const PERT_MAX_IMAGE_ARROW_COUNT = 200;
 const PERT_IMAGE_ARROW_MAX_NODE_COUNT = 250;
@@ -911,7 +912,76 @@ function expandPertRowsForArrowClearance_(schedule, positions) {
         changed = true;
       });
     });
+
+    if (separatePertCrossingArrowRows_(schedule, positions, activityById)) {
+      changed = true;
+    }
   }
+}
+
+function separatePertCrossingArrowRows_(schedule, positions, activityById) {
+  const routes = [];
+
+  schedule.forEach(activity => {
+    const sourcePosition = positions.get(activity.id);
+    if (!sourcePosition) return;
+
+    activity.successors.forEach(successorId => {
+      const successor = activityById.get(successorId);
+      const targetPosition = positions.get(successorId);
+      if (!successor || !targetPosition) return;
+      if (targetPosition.renderedLevel <= sourcePosition.renderedLevel) return;
+
+      routes.push({
+        sourceId: activity.id,
+        targetId: successorId,
+        sourcePosition,
+        targetPosition,
+      });
+    });
+  });
+
+  for (let firstIndex = 0; firstIndex < routes.length; firstIndex++) {
+    for (let secondIndex = firstIndex + 1; secondIndex < routes.length; secondIndex++) {
+      const first = routes[firstIndex];
+      const second = routes[secondIndex];
+      if (first.sourceId === second.sourceId || first.targetId === second.targetId) continue;
+      if (!doPertArrowRoutesShareColumnSpan_(first, second)) continue;
+      if (!doPertArrowRoutesCrossRows_(first, second)) continue;
+
+      if (first.targetPosition.renderedLevel === second.targetPosition.renderedLevel) {
+        const firstRowOffset = first.targetPosition.rowOffset;
+        first.targetPosition.rowOffset = second.targetPosition.rowOffset;
+        second.targetPosition.rowOffset = firstRowOffset;
+      } else {
+        const anchorPosition = first.targetPosition.rowOffset >= second.targetPosition.rowOffset
+          ? first.targetPosition
+          : second.targetPosition;
+        shiftPertPositionAndLaterRows_(positions, anchorPosition, PERT_MIN_ARROW_CROSSING_ROW_DELTA);
+      }
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function doPertArrowRoutesShareColumnSpan_(first, second) {
+  const firstLeft = Math.min(first.sourcePosition.renderedLevel, first.targetPosition.renderedLevel);
+  const firstRight = Math.max(first.sourcePosition.renderedLevel, first.targetPosition.renderedLevel);
+  const secondLeft = Math.min(second.sourcePosition.renderedLevel, second.targetPosition.renderedLevel);
+  const secondRight = Math.max(second.sourcePosition.renderedLevel, second.targetPosition.renderedLevel);
+  return firstLeft < secondRight && secondLeft < firstRight;
+}
+
+function doPertArrowRoutesCrossRows_(first, second) {
+  const sourceDelta = first.sourcePosition.rowOffset - second.sourcePosition.rowOffset;
+  const targetDelta = first.targetPosition.rowOffset - second.targetPosition.rowOffset;
+  if (sourceDelta === 0 || targetDelta === 0) {
+    return Math.abs(sourceDelta - targetDelta) < PERT_MIN_CONNECTED_NODE_ROW_DELTA;
+  }
+
+  return sourceDelta * targetDelta < 0;
 }
 
 function shiftPertPositionAndLaterRows_(positions, anchorPosition, rowsToAdd) {
@@ -1166,20 +1236,21 @@ function renderPertImageArrow_(pert, sourcePosition, targetPosition, successorIn
   applyPertArrowEndpointGap_(startPoint, endPoint, PERT_ARROW_IMAGE_NODE_GAP_PX);
   if (Math.round(startPoint.x) === Math.round(endPoint.x) && Math.round(startPoint.y) === Math.round(endPoint.y)) return false;
 
-  const minX = Math.min(startPoint.x, endPoint.x) - PERT_ARROW_IMAGE_PADDING_PX;
-  const minY = Math.min(startPoint.y, endPoint.y) - PERT_ARROW_IMAGE_PADDING_PX;
-  const maxX = Math.max(startPoint.x, endPoint.x) + PERT_ARROW_IMAGE_PADDING_PX;
-  const maxY = Math.max(startPoint.y, endPoint.y) + PERT_ARROW_IMAGE_PADDING_PX;
+  const routePoints = getPertArrowImageRoutePoints_(startPoint.x, startPoint.y, endPoint.x, endPoint.y);
+  const minX = Math.min.apply(null, routePoints.map(point => point.x)) - PERT_ARROW_IMAGE_PADDING_PX;
+  const minY = Math.min.apply(null, routePoints.map(point => point.y)) - PERT_ARROW_IMAGE_PADDING_PX;
+  const maxX = Math.max.apply(null, routePoints.map(point => point.x)) + PERT_ARROW_IMAGE_PADDING_PX;
+  const maxY = Math.max.apply(null, routePoints.map(point => point.y)) + PERT_ARROW_IMAGE_PADDING_PX;
   const imageWidth = Math.max(1, Math.ceil(maxX - minX));
   const imageHeight = Math.max(1, Math.ceil(maxY - minY));
   if (!canRenderPertArrowImage_(imageWidth, imageHeight)) return false;
 
   try {
-    const svgStartX = startPoint.x - minX;
-    const svgStartY = startPoint.y - minY;
-    const svgEndX = endPoint.x - minX;
-    const svgEndY = endPoint.y - minY;
-    const blob = createPertArrowPngBlob_(imageWidth, imageHeight, svgStartX, svgStartY, svgEndX, svgEndY);
+    const localRoutePoints = routePoints.map(point => ({
+      x: point.x - minX,
+      y: point.y - minY,
+    }));
+    const blob = createPertArrowPngBlob_(imageWidth, imageHeight, localRoutePoints);
     const anchorCol = Math.max(1, Math.floor(minX / PERT_CELL_WIDTH_PX) + 1);
     const anchorRow = Math.max(1, Math.floor(minY / PERT_CELL_HEIGHT_PX) + 1);
     const xOffset = Math.max(0, Math.round(minX - (anchorCol - 1) * PERT_CELL_WIDTH_PX));
@@ -1201,9 +1272,8 @@ function canRenderPertArrowImage_(width, height) {
   return pixelCount <= PERT_MAX_ARROW_IMAGE_PIXELS && estimatedPngBytes <= PERT_MAX_ARROW_IMAGE_BYTES;
 }
 
-function createPertArrowPngBlob_(width, height, startX, startY, endX, endY) {
+function createPertArrowPngBlob_(width, height, routePoints) {
   const rgba = createTransparentRgbaBuffer_(width, height);
-  const routePoints = getPertArrowImageRoutePoints_(startX, startY, endX, endY);
 
   for (let index = 0; index < routePoints.length - 1; index++) {
     drawPertPngLine_(
@@ -1219,14 +1289,15 @@ function createPertArrowPngBlob_(width, height, startX, startY, endX, endY) {
   }
 
   const arrowStartPoint = routePoints[Math.max(0, routePoints.length - 2)];
+  const arrowEndPoint = routePoints[routePoints.length - 1];
   drawPertPngArrowHead_(
     rgba,
     width,
     height,
     arrowStartPoint.x,
     arrowStartPoint.y,
-    endX,
-    endY,
+    arrowEndPoint.x,
+    arrowEndPoint.y,
     PERT_ARROW_IMAGE_HEAD_LENGTH,
     PERT_ARROW_IMAGE_HEAD_HALF_WIDTH
   );
@@ -1235,7 +1306,17 @@ function createPertArrowPngBlob_(width, height, startX, startY, endX, endY) {
 }
 
 function getPertArrowImageRoutePoints_(startX, startY, endX, endY) {
-  return [{ x: startX, y: startY }, { x: endX, y: endY }];
+  if (Math.abs(endX - startX) < PERT_CELL_WIDTH_PX) {
+    return [{ x: startX, y: startY }, { x: endX, y: endY }];
+  }
+
+  const midX = startX + (endX - startX) / 2;
+  return [
+    { x: startX, y: startY },
+    { x: midX, y: startY },
+    { x: midX, y: endY },
+    { x: endX, y: endY },
+  ];
 }
 
 function createTransparentRgbaBuffer_(width, height) {
