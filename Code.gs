@@ -43,7 +43,7 @@ const PERT_CELL_HEIGHT_PX = 28;
 const PERT_ARROW_IMAGE_PADDING_PX = 4;
 const PERT_ARROW_IMAGE_NODE_GAP_PX = 16;
 const PERT_ARROW_BOX_CLEARANCE_PX = 8;
-const PERT_MAX_ARROW_BOX_AVOIDANCE_PASSES = 4;
+const PERT_MAX_ARROW_BOX_AVOIDANCE_PASSES = 12;
 const PERT_MAX_ARROW_IMAGE_PIXELS = 2500000;
 const PERT_MAX_ARROW_IMAGE_BYTES = 12000000;
 const PERT_MAX_LEVELS_PER_ROW_BAND = 120;
@@ -1000,8 +1000,27 @@ function nudgePertRowsAwayFromDirectArrows_(schedule, positions) {
     const overlap = findPertDirectArrowBoxOverlap_(schedule, activityById, positions);
     if (!overlap) return;
 
-    nudgePertLevelRowsFrom_(positions, overlap.position, PERT_ADAPTIVE_ROW_NUDGE);
+    const positionToMove = choosePertEndpointPositionToClearOverlap_(overlap);
+    nudgePertLevelRowsFrom_(positions, positionToMove, PERT_ADAPTIVE_ROW_NUDGE);
   }
+}
+
+function choosePertEndpointPositionToClearOverlap_(overlap) {
+  const sourcePosition = overlap.sourcePosition;
+  const targetPosition = overlap.targetPosition;
+  const blockingPosition = overlap.blockingNode.position;
+  const sourceDistance = Math.abs(sourcePosition.rowOffset - blockingPosition.rowOffset);
+  const targetDistance = Math.abs(targetPosition.rowOffset - blockingPosition.rowOffset);
+
+  if (sourcePosition.rowOffset > blockingPosition.rowOffset && targetPosition.rowOffset <= blockingPosition.rowOffset) {
+    return sourcePosition;
+  }
+
+  if (targetPosition.rowOffset > blockingPosition.rowOffset && sourcePosition.rowOffset <= blockingPosition.rowOffset) {
+    return targetPosition;
+  }
+
+  return sourceDistance <= targetDistance ? sourcePosition : targetPosition;
 }
 
 function findPertDirectArrowBoxOverlap_(schedule, activityById, positions) {
@@ -1028,7 +1047,13 @@ function findPertDirectArrowBoxOverlap_(schedule, activityById, positions) {
       applyPertArrowEndpointGap_(points.start, points.end, PERT_ARROW_IMAGE_NODE_GAP_PX);
 
       const blockingNode = findPertNodeBlockingDirectArrow_(positions, activity.id, successorId, points.start, points.end);
-      if (blockingNode) return blockingNode;
+      if (blockingNode) {
+        return {
+          sourcePosition,
+          targetPosition,
+          blockingNode,
+        };
+      }
     }
   }
 
