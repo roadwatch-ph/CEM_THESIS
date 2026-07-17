@@ -47,6 +47,8 @@ const PERT_MAX_ARROW_IMAGE_BYTES = 12000000;
 const PERT_MAX_LEVELS_PER_ROW_BAND = 120;
 const PERT_ROW_BAND_SPACING = 4;
 const PERT_MIN_CONNECTED_NODE_ROW_DELTA = 3;
+const PERT_ADAPTIVE_ROW_NUDGE = 1;
+const PERT_MAX_ADAPTIVE_ROW_NUDGES_PER_NODE = 2;
 const PERT_MAX_DIRECT_ARROW_RENDER_CELLS = 200000;
 const PERT_MAX_IMAGE_ARROW_COUNT = 200;
 const PERT_IMAGE_ARROW_MAX_NODE_COUNT = 250;
@@ -854,6 +856,7 @@ function buildPertLayout_(schedule) {
 
   alignPertFinishMilestoneRow_(schedule, positions);
   expandPertRowsForArrowClearance_(schedule, positions);
+  nudgePertRowsForFanClarity_(schedule, positions);
 
   return {
     positions,
@@ -919,6 +922,62 @@ function shiftPertPositionAndLaterRows_(positions, anchorPosition, rowsToAdd) {
     if (position === anchorPosition || position.rowOffset >= anchorPosition.rowOffset) {
       position.rowOffset += rowsToAdd;
     }
+  });
+}
+
+
+function nudgePertRowsForFanClarity_(schedule, positions) {
+  const nudgeCountById = new Map();
+  const maxPasses = Math.max(1, schedule.length);
+
+  for (let pass = 0; pass < maxPasses; pass++) {
+    const crowdedConnection = findPertCrowdedFanConnection_(schedule, positions, nudgeCountById);
+    if (!crowdedConnection) return;
+
+    nudgePertLevelRowsFrom_(positions, crowdedConnection.position, PERT_ADAPTIVE_ROW_NUDGE);
+    nudgeCountById.set(crowdedConnection.id, (nudgeCountById.get(crowdedConnection.id) || 0) + 1);
+  }
+}
+
+function findPertCrowdedFanConnection_(schedule, positions, nudgeCountById) {
+  for (let index = 0; index < schedule.length; index++) {
+    const activity = schedule[index];
+    const crowdedSuccessor = findPertCrowdedNeighborPosition_(activity.successors, positions, nudgeCountById);
+    if (crowdedSuccessor) return crowdedSuccessor;
+
+    const crowdedPredecessor = findPertCrowdedNeighborPosition_(activity.predecessors, positions, nudgeCountById);
+    if (crowdedPredecessor) return crowdedPredecessor;
+  }
+
+  return null;
+}
+
+function findPertCrowdedNeighborPosition_(neighborIds, positions, nudgeCountById) {
+  if (!neighborIds || neighborIds.length < 2) return null;
+
+  const neighbors = neighborIds
+    .map(id => ({ id, position: positions.get(id) }))
+    .filter(neighbor => neighbor.position)
+    .sort((a, b) => a.position.rowOffset - b.position.rowOffset);
+
+  for (let index = 1; index < neighbors.length; index++) {
+    const previous = neighbors[index - 1];
+    const current = neighbors[index];
+    const rowGap = current.position.rowOffset - previous.position.rowOffset;
+
+    if (rowGap >= PERT_MIN_CONNECTED_NODE_ROW_DELTA) continue;
+    if ((nudgeCountById.get(current.id) || 0) >= PERT_MAX_ADAPTIVE_ROW_NUDGES_PER_NODE) continue;
+
+    return current;
+  }
+
+  return null;
+}
+
+function nudgePertLevelRowsFrom_(positions, anchorPosition, rowsToAdd) {
+  positions.forEach(position => {
+    if (position.band !== anchorPosition.band || position.renderedLevel !== anchorPosition.renderedLevel) return;
+    if (position.rowOffset >= anchorPosition.rowOffset) position.rowOffset += rowsToAdd;
   });
 }
 
