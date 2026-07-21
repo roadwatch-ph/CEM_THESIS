@@ -871,6 +871,7 @@ function buildPertLayout_(schedule) {
   nudgePertRowsForFanClarity_(schedule, positions);
   nudgePertRowsAwayFromDirectArrows_(schedule, positions);
   nudgePertRowsAwayFromDirectArrowCrossings_(schedule, positions);
+  enforcePertNodeVerticalGaps_(positions);
 
   return {
     positions,
@@ -879,6 +880,29 @@ function buildPertLayout_(schedule) {
     maxRenderedLevel: Math.min(maxLevel, PERT_MAX_LEVELS_PER_ROW_BAND - 1),
     maxNodeRow: getMaxPertNodeRow_(positions),
   };
+}
+
+
+function enforcePertNodeVerticalGaps_(positions) {
+  const minimumRowGap = PERT_NODE_HEIGHT + 1;
+  const positionsByRenderedColumn = new Map();
+
+  positions.forEach(position => {
+    const key = `${position.band || 0}:${position.renderedLevel}`;
+    if (!positionsByRenderedColumn.has(key)) positionsByRenderedColumn.set(key, []);
+    positionsByRenderedColumn.get(key).push(position);
+  });
+
+  positionsByRenderedColumn.forEach(columnPositions => {
+    columnPositions
+      .sort((a, b) => a.rowOffset - b.rowOffset || a.lane - b.lane)
+      .reduce((previousPosition, currentPosition) => {
+        if (previousPosition && currentPosition.rowOffset - previousPosition.rowOffset < minimumRowGap) {
+          currentPosition.rowOffset = previousPosition.rowOffset + minimumRowGap;
+        }
+        return currentPosition;
+      }, null);
+  });
 }
 
 function alignPertFinishMilestoneRow_(schedule, positions) {
