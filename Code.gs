@@ -1639,7 +1639,7 @@ function renderPertImageArrow_(pert, sourcePosition, targetPosition, successorIn
       x: point.x - minX,
       y: point.y - minY,
     }));
-    const blob = createPertArrowRouteSvgBlob_(imageWidth, imageHeight, localizedRoutePoints);
+    const blob = createPertArrowRoutePngBlob_(imageWidth, imageHeight, localizedRoutePoints);
     const anchorCol = Math.max(1, Math.floor(minX / PERT_CELL_WIDTH_PX) + 1);
     const anchorRow = Math.max(1, Math.floor(minY / PERT_CELL_HEIGHT_PX) + 1);
     const xOffset = Math.max(0, Math.round(minX - (anchorCol - 1) * PERT_CELL_WIDTH_PX));
@@ -1658,11 +1658,11 @@ function renderPertImageArrow_(pert, sourcePosition, targetPosition, successorIn
 
 
 function getPertPreferredPixelRoutePoints_(startPoint, endPoint, successorIndex, incomingIndex, positions, sourceId, targetId) {
-  if (canUseDirectPertPixelRoute_(startPoint, endPoint, positions, sourceId, targetId)) {
-    return [startPoint, endPoint];
-  }
-
-  return getPertOrthogonalPixelRoutePoints_(startPoint, endPoint, successorIndex, incomingIndex);
+  // Keep dependency arrows visually consistent with standard PERT diagrams: a
+  // single straight connector from the predecessor node to the successor node.
+  // The previous orthogonal fallback produced segmented/broken-looking lines,
+  // which made simple left-to-right dependencies harder to read.
+  return [startPoint, endPoint];
 }
 
 function canUseDirectPertPixelRoute_(startPoint, endPoint, positions, sourceId, targetId) {
