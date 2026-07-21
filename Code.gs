@@ -1427,7 +1427,10 @@ function renderPertArrows_(pert, schedule, layout, rowsNeeded, columnsNeeded) {
       route.successorIndex,
       route.successorCount,
       route.incomingIndex,
-      route.incomingCount
+      route.incomingCount,
+      layout.positions,
+      route.sourceId,
+      route.targetId
     );
 
     if (!wasRenderedAsImage) {
@@ -1472,6 +1475,8 @@ function buildPertArrowRoutes_(schedule, layout) {
 
       const incomingIndexByPredecessor = incomingRouteIndexByTarget.get(successorId);
       arrowRoutes.push({
+        sourceId: activity.id,
+        targetId: successorId,
         sourcePosition,
         targetPosition,
         successorIndex,
@@ -1524,7 +1529,7 @@ function renderPertArrowGridInChunks_(pert, arrowGrid, rowsNeeded, columnsNeeded
   }
 }
 
-function renderPertImageArrow_(pert, sourcePosition, targetPosition, successorIndex, successorCount, incomingIndex, incomingCount) {
+function renderPertImageArrow_(pert, sourcePosition, targetPosition, successorIndex, successorCount, incomingIndex, incomingCount, positions, sourceId, targetId) {
   const connectionPoints = getPertArrowPixelConnectionPoints_(
     sourcePosition,
     targetPosition,
@@ -1538,7 +1543,7 @@ function renderPertImageArrow_(pert, sourcePosition, targetPosition, successorIn
   applyPertArrowEndpointGap_(startPoint, endPoint, PERT_ARROW_IMAGE_NODE_GAP_PX);
   if (Math.round(startPoint.x) === Math.round(endPoint.x) && Math.round(startPoint.y) === Math.round(endPoint.y)) return false;
 
-  const routePoints = getPertOrthogonalPixelRoutePoints_(startPoint, endPoint, successorIndex, incomingIndex);
+  const routePoints = getPertPreferredPixelRoutePoints_(startPoint, endPoint, successorIndex, incomingIndex, positions, sourceId, targetId);
   const routeBounds = getPertPixelRouteBounds_(routePoints);
   const minX = routeBounds.minX - PERT_ARROW_IMAGE_PADDING_PX;
   const minY = routeBounds.minY - PERT_ARROW_IMAGE_PADDING_PX;
@@ -1568,6 +1573,29 @@ function renderPertImageArrow_(pert, sourcePosition, targetPosition, successorIn
   }
 }
 
+
+
+function getPertPreferredPixelRoutePoints_(startPoint, endPoint, successorIndex, incomingIndex, positions, sourceId, targetId) {
+  if (canUseDirectPertPixelRoute_(startPoint, endPoint, positions, sourceId, targetId)) {
+    return [startPoint, endPoint];
+  }
+
+  return getPertOrthogonalPixelRoutePoints_(startPoint, endPoint, successorIndex, incomingIndex);
+}
+
+function canUseDirectPertPixelRoute_(startPoint, endPoint, positions, sourceId, targetId) {
+  if (!positions) return true;
+
+  let isClear = true;
+  positions.forEach((position, id) => {
+    if (!isClear || id === sourceId || id === targetId) return;
+
+    const box = expandPertPixelBox_(getPertNodePixelBox_(position), PERT_ARROW_BOX_CLEARANCE_PX);
+    if (doesPertLineIntersectBox_(startPoint, endPoint, box)) isClear = false;
+  });
+
+  return isClear;
+}
 
 function getPertOrthogonalPixelRoutePoints_(startPoint, endPoint, successorIndex, incomingIndex) {
   const horizontalDistance = endPoint.x - startPoint.x;
@@ -1973,6 +2001,11 @@ function drawPertSmartArrow_(arrowGrid, sourcePosition, targetPosition, successo
 
   if (verticalDelta === 0 && !doesPertHorizontalRouteHitNode_(startPoint.row, startPoint.col, endPoint.col, occupiedNodeCells)) {
     drawPertHorizontalArrowLine_(arrowGrid, startPoint.row, startPoint.col, endPoint.col);
+    return;
+  }
+
+  if (canDrawPertDiagonalRoute_(arrowGrid, startPoint, endPoint, occupiedNodeCells)) {
+    drawPertDiagonalArrow_(arrowGrid, startPoint, endPoint);
     return;
   }
 
@@ -2722,7 +2755,19 @@ function getPertWebAppData() {
             route.incomingCount
           );
           applyPertArrowEndpointGap_(points.start, points.end, PERT_ARROW_IMAGE_NODE_GAP_PX);
-          return points;
+          return {
+            start: points.start,
+            end: points.end,
+            routePoints: getPertPreferredPixelRoutePoints_(
+              points.start,
+              points.end,
+              route.successorIndex,
+              route.incomingIndex,
+              layout.positions,
+              route.sourceId,
+              route.targetId
+            ),
+          };
         });
 
         return {
@@ -2814,7 +2859,8 @@ function renderDiagram(sheet) {
   svg.innerHTML = '<defs><marker id="arrow" markerWidth="12" markerHeight="12" refX="11" refY="6" orient="auto"><path d="M0,0 L12,6 L0,12 z" fill="#111827"/></marker></defs>';
   sheet.links.forEach(link => {
     const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-    path.setAttribute('d', 'M ' + link.start.x + ' ' + link.start.y + ' L ' + link.end.x + ' ' + link.end.y);
+    const points = link.routePoints || [link.start, link.end];
+    path.setAttribute('d', points.map((point, index) => (index === 0 ? 'M ' : 'L ') + point.x + ' ' + point.y).join(' '));
     path.setAttribute('fill', 'none');
     path.setAttribute('stroke', '#111827');
     path.setAttribute('stroke-width', '${PERT_WEB_ARROW_STROKE_WIDTH}');
