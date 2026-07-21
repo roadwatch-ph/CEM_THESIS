@@ -1523,25 +1523,73 @@ function createPertArrowDisplayGrid_(arrowGrid) {
 }
 
 function stylePertArrowGridConnectors_(pert, arrowGrid) {
-  arrowGrid.forEach((row, rowIndex) => {
-    row.forEach((glyph, colIndex) => {
-      if (!PERT_ARROW_GRID_CONNECTOR_GLYPHS.has(glyph)) return;
+  stylePertHorizontalArrowGridConnectors_(pert, arrowGrid);
+  stylePertVerticalArrowGridConnectors_(pert, arrowGrid);
+}
 
-      const connectorRange = pert.getRange(rowIndex + 1, colIndex + 1);
-      const hasHorizontal = glyph === '━' || glyph === '┼';
-      const hasVertical = glyph === '┃' || glyph === '┼';
-      connectorRange.setBorder(
-        hasHorizontal,
-        hasVertical,
-        null,
-        null,
-        false,
-        false,
-        PERT_ARROW_COLOR,
-        SpreadsheetApp.BorderStyle.SOLID
-      );
-    });
+function stylePertHorizontalArrowGridConnectors_(pert, arrowGrid) {
+  arrowGrid.forEach((row, rowIndex) => {
+    let runStartCol = null;
+
+    for (let colIndex = 0; colIndex <= row.length; colIndex++) {
+      const glyph = colIndex < row.length ? row[colIndex] : '';
+      const isHorizontalConnector = glyph === '━' || glyph === '┼';
+
+      if (isHorizontalConnector && runStartCol === null) {
+        runStartCol = colIndex + 1;
+      }
+
+      if ((!isHorizontalConnector || colIndex === row.length) && runStartCol !== null) {
+        const endCol = colIndex;
+        const connectorRange = pert.getRange(rowIndex + 1, runStartCol, 1, endCol - runStartCol + 1);
+        connectorRange.setBorder(
+          true,
+          null,
+          null,
+          null,
+          false,
+          false,
+          PERT_ARROW_COLOR,
+          SpreadsheetApp.BorderStyle.SOLID
+        );
+        runStartCol = null;
+      }
+    }
   });
+}
+
+function stylePertVerticalArrowGridConnectors_(pert, arrowGrid) {
+  if (arrowGrid.length === 0) return;
+
+  const columnCount = arrowGrid[0].length;
+  for (let colIndex = 0; colIndex < columnCount; colIndex++) {
+    let runStartRow = null;
+
+    for (let rowIndex = 0; rowIndex <= arrowGrid.length; rowIndex++) {
+      const glyph = rowIndex < arrowGrid.length ? arrowGrid[rowIndex][colIndex] : '';
+      const isVerticalConnector = glyph === '┃' || glyph === '┼';
+
+      if (isVerticalConnector && runStartRow === null) {
+        runStartRow = rowIndex + 1;
+      }
+
+      if ((!isVerticalConnector || rowIndex === arrowGrid.length) && runStartRow !== null) {
+        const endRow = rowIndex;
+        const connectorRange = pert.getRange(runStartRow, colIndex + 1, endRow - runStartRow + 1, 1);
+        connectorRange.setBorder(
+          null,
+          true,
+          null,
+          null,
+          false,
+          false,
+          PERT_ARROW_COLOR,
+          SpreadsheetApp.BorderStyle.SOLID
+        );
+        runStartRow = null;
+      }
+    }
+  }
 }
 
 function renderPertArrowGridInChunks_(pert, arrowGrid, rowsNeeded, columnsNeeded) {
