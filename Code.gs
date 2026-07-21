@@ -60,6 +60,7 @@ const PERT_MAX_IMAGE_ARROW_COUNT = 200;
 const PERT_IMAGE_ARROW_MAX_NODE_COUNT = 250;
 const PERT_USE_IMAGE_ARROWS = true;
 const PERT_ARROW_IMAGE_STROKE_WIDTH = 2;
+const PERT_ARROW_GRID_CONNECTOR_GLYPHS = new Set(['━', '┃', '┼']);
 const PERT_ARROW_IMAGE_HEAD_LENGTH = 10;
 const PERT_ARROW_IMAGE_HEAD_HALF_WIDTH = 6;
 const PERT_WEB_ARROW_STROKE_WIDTH = 2;
@@ -1498,19 +1499,97 @@ function shouldRenderPertImageArrows_(schedule, arrowRoutes) {
 
 
 function renderPertArrowGrid_(pert, arrowGrid, rowsNeeded, columnsNeeded) {
+  const displayGrid = createPertArrowDisplayGrid_(arrowGrid);
+
   if (rowsNeeded * columnsNeeded > PERT_MAX_DIRECT_ARROW_RENDER_CELLS) {
-    renderPertArrowGridInChunks_(pert, arrowGrid, rowsNeeded, columnsNeeded);
+    renderPertArrowGridInChunks_(pert, displayGrid, rowsNeeded, columnsNeeded);
+    stylePertArrowGridConnectors_(pert, arrowGrid);
     return;
   }
 
   const arrowRange = pert.getRange(1, 1, rowsNeeded, columnsNeeded);
   arrowRange
-    .setValues(arrowGrid)
+    .setValues(displayGrid)
     .setVerticalAlignment('middle')
     .setHorizontalAlignment('center')
     .setFontColor(PERT_ARROW_COLOR)
     .setFontSize(PERT_ARROW_FONT_SIZE)
     .setFontWeight('normal');
+  stylePertArrowGridConnectors_(pert, arrowGrid);
+}
+
+function createPertArrowDisplayGrid_(arrowGrid) {
+  return arrowGrid.map(row => row.map(glyph => PERT_ARROW_GRID_CONNECTOR_GLYPHS.has(glyph) ? '' : glyph));
+}
+
+function stylePertArrowGridConnectors_(pert, arrowGrid) {
+  stylePertHorizontalArrowGridConnectors_(pert, arrowGrid);
+  stylePertVerticalArrowGridConnectors_(pert, arrowGrid);
+}
+
+function stylePertHorizontalArrowGridConnectors_(pert, arrowGrid) {
+  arrowGrid.forEach((row, rowIndex) => {
+    let runStartCol = null;
+
+    for (let colIndex = 0; colIndex <= row.length; colIndex++) {
+      const glyph = colIndex < row.length ? row[colIndex] : '';
+      const isHorizontalConnector = glyph === '━' || glyph === '┼';
+
+      if (isHorizontalConnector && runStartCol === null) {
+        runStartCol = colIndex + 1;
+      }
+
+      if ((!isHorizontalConnector || colIndex === row.length) && runStartCol !== null) {
+        const endCol = colIndex;
+        const connectorRange = pert.getRange(rowIndex + 1, runStartCol, 1, endCol - runStartCol + 1);
+        connectorRange.setBorder(
+          true,
+          null,
+          null,
+          null,
+          false,
+          false,
+          PERT_ARROW_COLOR,
+          SpreadsheetApp.BorderStyle.SOLID
+        );
+        runStartCol = null;
+      }
+    }
+  });
+}
+
+function stylePertVerticalArrowGridConnectors_(pert, arrowGrid) {
+  if (arrowGrid.length === 0) return;
+
+  const columnCount = arrowGrid[0].length;
+  for (let colIndex = 0; colIndex < columnCount; colIndex++) {
+    let runStartRow = null;
+
+    for (let rowIndex = 0; rowIndex <= arrowGrid.length; rowIndex++) {
+      const glyph = rowIndex < arrowGrid.length ? arrowGrid[rowIndex][colIndex] : '';
+      const isVerticalConnector = glyph === '┃' || glyph === '┼';
+
+      if (isVerticalConnector && runStartRow === null) {
+        runStartRow = rowIndex + 1;
+      }
+
+      if ((!isVerticalConnector || rowIndex === arrowGrid.length) && runStartRow !== null) {
+        const endRow = rowIndex;
+        const connectorRange = pert.getRange(runStartRow, colIndex + 1, endRow - runStartRow + 1, 1);
+        connectorRange.setBorder(
+          null,
+          true,
+          null,
+          null,
+          false,
+          false,
+          PERT_ARROW_COLOR,
+          SpreadsheetApp.BorderStyle.SOLID
+        );
+        runStartRow = null;
+      }
+    }
+  }
 }
 
 function renderPertArrowGridInChunks_(pert, arrowGrid, rowsNeeded, columnsNeeded) {
