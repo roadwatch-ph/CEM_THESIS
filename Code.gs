@@ -1026,6 +1026,11 @@ function nudgePertRowsAwayFromDirectArrows_(schedule, positions) {
     const overlap = findPertDirectArrowBoxOverlap_(schedule, activityById, positions);
     if (!overlap) return;
 
+    if (overlap.targetId === PERT_FINISH_MILESTONE_ID) {
+      nudgePertLevelRowsFrom_(positions, overlap.sourcePosition, PERT_ADAPTIVE_ROW_NUDGE);
+      continue;
+    }
+
     if (shouldLiftPertSourceForDirectArrowOverlap_(overlap)) {
       liftPertPositionWithinLevel_(positions, overlap.sourcePosition, PERT_ADAPTIVE_ROW_NUDGE);
       continue;
@@ -1038,7 +1043,6 @@ function nudgePertRowsAwayFromDirectArrows_(schedule, positions) {
 
 function shouldLiftPertSourceForDirectArrowOverlap_(overlap) {
   if (overlap.sourcePosition.rowOffset <= 0) return false;
-  if (overlap.targetId === PERT_FINISH_MILESTONE_ID) return true;
 
   return overlap.targetPosition.level > overlap.sourcePosition.level;
 }
