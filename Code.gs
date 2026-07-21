@@ -60,6 +60,7 @@ const PERT_MAX_IMAGE_ARROW_COUNT = 200;
 const PERT_IMAGE_ARROW_MAX_NODE_COUNT = 250;
 const PERT_USE_IMAGE_ARROWS = true;
 const PERT_ARROW_IMAGE_STROKE_WIDTH = 2;
+const PERT_ARROW_GRID_CONNECTOR_GLYPHS = new Set(['━', '┃', '┼']);
 const PERT_ARROW_IMAGE_HEAD_LENGTH = 10;
 const PERT_ARROW_IMAGE_HEAD_HALF_WIDTH = 6;
 const PERT_WEB_ARROW_STROKE_WIDTH = 2;
@@ -1498,19 +1499,49 @@ function shouldRenderPertImageArrows_(schedule, arrowRoutes) {
 
 
 function renderPertArrowGrid_(pert, arrowGrid, rowsNeeded, columnsNeeded) {
+  const displayGrid = createPertArrowDisplayGrid_(arrowGrid);
+
   if (rowsNeeded * columnsNeeded > PERT_MAX_DIRECT_ARROW_RENDER_CELLS) {
-    renderPertArrowGridInChunks_(pert, arrowGrid, rowsNeeded, columnsNeeded);
+    renderPertArrowGridInChunks_(pert, displayGrid, rowsNeeded, columnsNeeded);
+    stylePertArrowGridConnectors_(pert, arrowGrid);
     return;
   }
 
   const arrowRange = pert.getRange(1, 1, rowsNeeded, columnsNeeded);
   arrowRange
-    .setValues(arrowGrid)
+    .setValues(displayGrid)
     .setVerticalAlignment('middle')
     .setHorizontalAlignment('center')
     .setFontColor(PERT_ARROW_COLOR)
     .setFontSize(PERT_ARROW_FONT_SIZE)
     .setFontWeight('normal');
+  stylePertArrowGridConnectors_(pert, arrowGrid);
+}
+
+function createPertArrowDisplayGrid_(arrowGrid) {
+  return arrowGrid.map(row => row.map(glyph => PERT_ARROW_GRID_CONNECTOR_GLYPHS.has(glyph) ? '' : glyph));
+}
+
+function stylePertArrowGridConnectors_(pert, arrowGrid) {
+  arrowGrid.forEach((row, rowIndex) => {
+    row.forEach((glyph, colIndex) => {
+      if (!PERT_ARROW_GRID_CONNECTOR_GLYPHS.has(glyph)) return;
+
+      const connectorRange = pert.getRange(rowIndex + 1, colIndex + 1);
+      const hasHorizontal = glyph === '━' || glyph === '┼';
+      const hasVertical = glyph === '┃' || glyph === '┼';
+      connectorRange.setBorder(
+        hasHorizontal,
+        hasVertical,
+        null,
+        null,
+        false,
+        false,
+        PERT_ARROW_COLOR,
+        SpreadsheetApp.BorderStyle.SOLID
+      );
+    });
+  });
 }
 
 function renderPertArrowGridInChunks_(pert, arrowGrid, rowsNeeded, columnsNeeded) {
