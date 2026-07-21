@@ -1681,15 +1681,40 @@ function createTransparentRgbaBuffer_(width, height) {
 }
 
 function drawPertPngLine_(rgba, width, height, startX, startY, endX, endY, thickness) {
+  const halfThickness = Math.max(0.5, thickness / 2);
+  const minX = Math.max(0, Math.floor(Math.min(startX, endX) - halfThickness));
+  const maxX = Math.min(width - 1, Math.ceil(Math.max(startX, endX) + halfThickness));
+  const minY = Math.max(0, Math.floor(Math.min(startY, endY) - halfThickness));
+  const maxY = Math.min(height - 1, Math.ceil(Math.max(startY, endY) + halfThickness));
+  const radiusSquared = halfThickness * halfThickness;
+
+  for (let y = minY; y <= maxY; y++) {
+    for (let x = minX; x <= maxX; x++) {
+      if (getSquaredDistanceToPertLineSegment_(x + 0.5, y + 0.5, startX, startY, endX, endY) <= radiusSquared) {
+        setPertPngPixel_(rgba, width, height, x, y);
+      }
+    }
+  }
+}
+
+function getSquaredDistanceToPertLineSegment_(pointX, pointY, startX, startY, endX, endY) {
   const dx = endX - startX;
   const dy = endY - startY;
-  const steps = Math.max(Math.abs(dx), Math.abs(dy), 1);
+  const lengthSquared = dx * dx + dy * dy;
 
-  for (let step = 0; step <= steps; step++) {
-    const x = startX + dx * step / steps;
-    const y = startY + dy * step / steps;
-    drawPertPngCircle_(rgba, width, height, x, y, thickness / 2);
+  if (lengthSquared === 0) {
+    const singlePointDx = pointX - startX;
+    const singlePointDy = pointY - startY;
+    return singlePointDx * singlePointDx + singlePointDy * singlePointDy;
   }
+
+  const projection = Math.max(0, Math.min(1, ((pointX - startX) * dx + (pointY - startY) * dy) / lengthSquared));
+  const closestX = startX + projection * dx;
+  const closestY = startY + projection * dy;
+  const distanceX = pointX - closestX;
+  const distanceY = pointY - closestY;
+
+  return distanceX * distanceX + distanceY * distanceY;
 }
 
 function drawPertPngArrowHead_(rgba, width, height, startX, startY, endX, endY, length, halfWidth) {
