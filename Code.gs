@@ -46,6 +46,9 @@ const PERT_CELL_WIDTH_PX = 80;
 const PERT_CELL_HEIGHT_PX = 28;
 const PERT_ARROW_IMAGE_PADDING_PX = 4;
 const PERT_ARROW_IMAGE_NODE_GAP_PX = 16;
+const PERT_ORTHOGONAL_ROUTE_ROW_CLEARANCE_PX = 18;
+const PERT_ORTHOGONAL_ROUTE_ROW_STEP_PX = PERT_CELL_HEIGHT_PX;
+const PERT_MAX_ORTHOGONAL_ROUTE_ROW_ATTEMPTS = 12;
 const PERT_ARROW_BOX_CLEARANCE_PX = 8;
 const PERT_MAX_ARROW_BOX_AVOIDANCE_PASSES = 12;
 const PERT_MAX_ARROW_CROSSING_AVOIDANCE_PASSES = 12;
@@ -1658,11 +1661,88 @@ function renderPertImageArrow_(pert, sourcePosition, targetPosition, successorIn
 
 
 function getPertPreferredPixelRoutePoints_(startPoint, endPoint, successorIndex, incomingIndex, positions, sourceId, targetId) {
-  // Keep dependency arrows visually consistent with standard PERT diagrams: a
-  // single straight connector from the predecessor node to the successor node.
-  // The previous orthogonal fallback produced segmented/broken-looking lines,
-  // which made simple left-to-right dependencies harder to read.
-  return [startPoint, endPoint];
+  // Prefer direct arrows when the path is clear. If a straight line would pass
+  // through another activity box, route through a shared row lane so the diagram
+  // keeps the dependency sequence while giving arrows cleaner connection space.
+  if (canUseDirectPertPixelRoute_(startPoint, endPoint, positions, sourceId, targetId)) {
+    return [startPoint, endPoint];
+  }
+
+  return getPertNodeAvoidingOrthogonalPixelRoutePoints_(
+    startPoint,
+    endPoint,
+    successorIndex,
+    incomingIndex,
+    positions,
+    sourceId,
+    targetId
+  );
+}
+
+function getPertNodeAvoidingOrthogonalPixelRoutePoints_(startPoint, endPoint, successorIndex, incomingIndex, positions, sourceId, targetId) {
+  const bendX = getPertOrthogonalPixelBendX_(startPoint, endPoint, successorIndex, incomingIndex);
+  const routeRows = getPertOrthogonalPixelRouteRowCandidates_(startPoint, endPoint);
+
+  for (let index = 0; index < routeRows.length; index++) {
+    const routeY = routeRows[index];
+    const routePoints = [
+      startPoint,
+      { x: bendX, y: startPoint.y },
+      { x: bendX, y: routeY },
+      { x: endPoint.x, y: routeY },
+      endPoint,
+    ];
+
+    if (canUsePertPixelPolylineRoute_(routePoints, positions, sourceId, targetId)) return compactPertPixelRoutePoints_(routePoints);
+  }
+
+  return compactPertPixelRoutePoints_([
+    startPoint,
+    { x: bendX, y: startPoint.y },
+    { x: bendX, y: endPoint.y },
+    endPoint,
+  ]);
+}
+
+function getPertOrthogonalPixelBendX_(startPoint, endPoint, successorIndex, incomingIndex) {
+  const minX = Math.min(startPoint.x, endPoint.x);
+  const maxX = Math.max(startPoint.x, endPoint.x);
+  const horizontalDistance = maxX - minX;
+  const routeOffset = Math.max(-2, Math.min(2, (successorIndex || 0) - (incomingIndex || 0))) * PERT_CELL_WIDTH_PX / 5;
+  const centeredBendX = minX + horizontalDistance / 2 + routeOffset;
+  const clearance = Math.min(PERT_CELL_WIDTH_PX, Math.max(PERT_ARROW_IMAGE_NODE_GAP_PX, horizontalDistance / 4));
+
+  return Math.max(minX + clearance, Math.min(maxX - clearance, centeredBendX));
+}
+
+function getPertOrthogonalPixelRouteRowCandidates_(startPoint, endPoint) {
+  const topY = Math.min(startPoint.y, endPoint.y);
+  const bottomY = Math.max(startPoint.y, endPoint.y);
+  const midY = (startPoint.y + endPoint.y) / 2;
+  const candidates = [midY];
+
+  for (let attempt = 1; attempt <= PERT_MAX_ORTHOGONAL_ROUTE_ROW_ATTEMPTS; attempt++) {
+    const offset = PERT_ORTHOGONAL_ROUTE_ROW_CLEARANCE_PX + attempt * PERT_ORTHOGONAL_ROUTE_ROW_STEP_PX;
+    candidates.push(topY - offset, bottomY + offset);
+  }
+
+  return candidates.map(routeY => Math.max(PERT_CELL_HEIGHT_PX / 2, routeY));
+}
+
+function canUsePertPixelPolylineRoute_(points, positions, sourceId, targetId) {
+  for (let index = 1; index < points.length; index++) {
+    if (!canUseDirectPertPixelRoute_(points[index - 1], points[index], positions, sourceId, targetId)) return false;
+  }
+
+  return true;
+}
+
+function compactPertPixelRoutePoints_(points) {
+  return points.filter((point, index) => {
+    if (index === 0) return true;
+    const previous = points[index - 1];
+    return Math.round(point.x) !== Math.round(previous.x) || Math.round(point.y) !== Math.round(previous.y);
+  });
 }
 
 function canUseDirectPertPixelRoute_(startPoint, endPoint, positions, sourceId, targetId) {
@@ -2248,9 +2328,7 @@ function getPertNodeAvoidingBendColumn_(startPoint, endPoint) {
 function getPertOrthogonalRouteRow_(arrowGrid, startPoint, endPoint, bendCol, occupiedNodeCells) {
   if (!occupiedNodeCells) return null;
 
-  const topRow = Math.max(1, Math.min(startPoint.row, endPoint.row) - 1);
-  const bottomRow = Math.min(arrowGrid.length, Math.max(startPoint.row, endPoint.row) + 1);
-  const candidateRows = [topRow, bottomRow, startPoint.row, endPoint.row];
+  const candidateRows = getPertGridRouteRowCandidates_(arrowGrid.length, startPoint.row, endPoint.row);
 
   for (let index = 0; index < candidateRows.length; index++) {
     const routeRow = candidateRows[index];
@@ -2258,6 +2336,19 @@ function getPertOrthogonalRouteRow_(arrowGrid, startPoint, endPoint, bendCol, oc
   }
 
   return null;
+}
+
+function getPertGridRouteRowCandidates_(maxRow, startRow, endRow) {
+  const topRow = Math.min(startRow, endRow);
+  const bottomRow = Math.max(startRow, endRow);
+  const middleRow = Math.round((startRow + endRow) / 2);
+  const candidateRows = [middleRow, Math.max(1, topRow - 1), Math.min(maxRow, bottomRow + 1), startRow, endRow];
+
+  for (let offset = 2; offset <= PERT_MAX_ORTHOGONAL_ROUTE_ROW_ATTEMPTS + 1; offset++) {
+    candidateRows.push(Math.max(1, topRow - offset), Math.min(maxRow, bottomRow + offset));
+  }
+
+  return candidateRows.filter((row, index) => row >= 1 && row <= maxRow && candidateRows.indexOf(row) === index);
 }
 
 function isPertRouteClear_(row, startCol, endCol, occupiedNodeCells) {
