@@ -64,7 +64,7 @@ const PERT_MAX_DIRECT_ARROW_RENDER_CELLS = 200000;
 const PERT_MAX_IMAGE_ARROW_COUNT = 200;
 const PERT_IMAGE_ARROW_MAX_NODE_COUNT = 250;
 const PERT_USE_IMAGE_ARROWS = true;
-const PERT_ARROW_IMAGE_STROKE_WIDTH = 3;
+const PERT_ARROW_IMAGE_STROKE_WIDTH = 2;
 const PERT_ARROW_GRID_CONNECTOR_GLYPHS = new Set(['━', '┃', '┼']);
 const PERT_ARROW_IMAGE_HEAD_LENGTH = 12;
 const PERT_ARROW_IMAGE_HEAD_HALF_WIDTH = 7;
@@ -2063,29 +2063,18 @@ function getPertArrowPixelConnectionPoints_(sourcePosition, targetPosition, succ
   const targetBox = getPertNodePixelBox_(targetPosition);
   const sourceCenter = getPertNodePixelCenter_(sourceBox);
   const targetCenter = getPertNodePixelCenter_(targetBox);
-  const dx = targetCenter.x - sourceCenter.x;
-  const dy = targetCenter.y - sourceCenter.y;
 
-  if (Math.abs(dx) >= Math.abs(dy)) {
-    return dx >= 0
-      ? {
-        start: getPertPixelPointOnVerticalEdgeCenter_(sourceBox, 'right'),
-        end: getPertPixelPointOnVerticalEdgeCenter_(targetBox, 'left'),
-      }
-      : {
-        start: getPertPixelPointOnVerticalEdgeCenter_(sourceBox, 'left'),
-        end: getPertPixelPointOnVerticalEdgeCenter_(targetBox, 'right'),
-      };
-  }
-
-  return dy >= 0
+  // Keep PERT dependencies flowing left-to-right like the requested reference:
+  // arrows leave the middle of the source node side, fan out as straight
+  // diagonals when needed, then enter the middle of the target node side.
+  return targetCenter.x >= sourceCenter.x
     ? {
-      start: getPertPixelPointOnHorizontalEdgeCenter_(sourceBox, 'bottom'),
-      end: getPertPixelPointOnHorizontalEdgeCenter_(targetBox, 'top'),
+      start: getPertPixelPointOnVerticalEdgeCenter_(sourceBox, 'right'),
+      end: getPertPixelPointOnVerticalEdgeCenter_(targetBox, 'left'),
     }
     : {
-      start: getPertPixelPointOnHorizontalEdgeCenter_(sourceBox, 'top'),
-      end: getPertPixelPointOnHorizontalEdgeCenter_(targetBox, 'bottom'),
+      start: getPertPixelPointOnVerticalEdgeCenter_(sourceBox, 'left'),
+      end: getPertPixelPointOnVerticalEdgeCenter_(targetBox, 'right'),
     };
 }
 
