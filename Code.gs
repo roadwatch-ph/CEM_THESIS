@@ -66,6 +66,7 @@ const PERT_IMAGE_ARROW_MAX_NODE_COUNT = 250;
 const PERT_USE_IMAGE_ARROWS = true;
 const PERT_ARROW_IMAGE_STROKE_WIDTH = 2;
 const PERT_ARROW_GRID_CONNECTOR_GLYPHS = new Set(['━', '┃', '┼']);
+const PERT_USE_BORDER_ARROW_CONNECTORS = false;
 const PERT_ARROW_IMAGE_HEAD_LENGTH = 12;
 const PERT_ARROW_IMAGE_HEAD_HALF_WIDTH = 7;
 const PERT_ARROW_MARKER_SIZE = 12;
@@ -1526,10 +1527,17 @@ function renderPertArrowGrid_(pert, arrowGrid, rowsNeeded, columnsNeeded) {
 }
 
 function createPertArrowDisplayGrid_(arrowGrid) {
-  return arrowGrid.map(row => row.map(glyph => PERT_ARROW_GRID_CONNECTOR_GLYPHS.has(glyph) ? '' : glyph));
+  // Keep fallback connectors as centered glyphs. The old fallback hid these
+  // glyphs and drew spreadsheet borders instead, which made horizontal arrows
+  // sit on the top edge of the cell while the arrowhead stayed vertically
+  // centered. That mismatch is why arrows looked like a floating triangle under
+  // a line in Google Sheets when image arrows were unavailable.
+  return arrowGrid.map(row => row.slice());
 }
 
 function stylePertArrowGridConnectors_(pert, arrowGrid) {
+  if (!PERT_USE_BORDER_ARROW_CONNECTORS) return;
+
   stylePertHorizontalArrowGridConnectors_(pert, arrowGrid);
   stylePertVerticalArrowGridConnectors_(pert, arrowGrid);
 }
