@@ -46,6 +46,7 @@ const PERT_CELL_WIDTH_PX = 80;
 const PERT_CELL_HEIGHT_PX = 28;
 const PERT_ARROW_IMAGE_PADDING_PX = 4;
 const PERT_ARROW_IMAGE_NODE_GAP_PX = 16;
+const PERT_ARROW_IMAGE_TARGET_GAP_PX = 1;
 const PERT_ORTHOGONAL_ROUTE_ROW_CLEARANCE_PX = 18;
 const PERT_ORTHOGONAL_ROUTE_ROW_STEP_PX = PERT_CELL_HEIGHT_PX;
 const PERT_MAX_ORTHOGONAL_ROUTE_ROW_ATTEMPTS = 12;
@@ -1624,7 +1625,7 @@ function renderPertImageArrow_(pert, sourcePosition, targetPosition, successorIn
   );
   const startPoint = connectionPoints.start;
   const endPoint = connectionPoints.end;
-  applyPertArrowEndpointGap_(startPoint, endPoint, PERT_ARROW_IMAGE_NODE_GAP_PX);
+  applyPertArrowEndpointGaps_(startPoint, endPoint, PERT_ARROW_IMAGE_NODE_GAP_PX, PERT_ARROW_IMAGE_TARGET_GAP_PX);
   if (Math.round(startPoint.x) === Math.round(endPoint.x) && Math.round(startPoint.y) === Math.round(endPoint.y)) return false;
 
   const routePoints = getPertPreferredPixelRoutePoints_(startPoint, endPoint, successorIndex, incomingIndex, positions, sourceId, targetId);
@@ -1661,22 +1662,10 @@ function renderPertImageArrow_(pert, sourcePosition, targetPosition, successorIn
 
 
 function getPertPreferredPixelRoutePoints_(startPoint, endPoint, successorIndex, incomingIndex, positions, sourceId, targetId) {
-  // Prefer direct arrows when the path is clear. If a straight line would pass
-  // through another activity box, route through a shared row lane so the diagram
-  // keeps the dependency sequence while giving arrows cleaner connection space.
-  if (canUseDirectPertPixelRoute_(startPoint, endPoint, positions, sourceId, targetId)) {
-    return [startPoint, endPoint];
-  }
-
-  return getPertNodeAvoidingOrthogonalPixelRoutePoints_(
-    startPoint,
-    endPoint,
-    successorIndex,
-    incomingIndex,
-    positions,
-    sourceId,
-    targetId
-  );
+  // Keep the image/web PERT arrows as direct point-to-point connectors so the
+  // diagram matches the expected hand-drawn PERT style with clean diagonal
+  // dependency lines converging into each activity node.
+  return [startPoint, endPoint];
 }
 
 function getPertNodeAvoidingOrthogonalPixelRoutePoints_(startPoint, endPoint, successorIndex, incomingIndex, positions, sourceId, targetId) {
@@ -2057,30 +2046,26 @@ function getPertArrowPixelConnectionPoints_(sourcePosition, targetPosition, succ
   const dy = targetCenter.y - sourceCenter.y;
 
   if (Math.abs(dx) >= Math.abs(dy)) {
-    if (dx >= 0) {
-      return {
-        start: getPertPixelPointOnVerticalEdge_(sourceBox, 'right', successorIndex, successorCount),
-        end: getPertPixelPointOnVerticalEdge_(targetBox, 'left', incomingIndex, incomingCount),
+    return dx >= 0
+      ? {
+        start: getPertPixelPointOnVerticalEdgeCenter_(sourceBox, 'right'),
+        end: getPertPixelPointOnVerticalEdgeCenter_(targetBox, 'left'),
+      }
+      : {
+        start: getPertPixelPointOnVerticalEdgeCenter_(sourceBox, 'left'),
+        end: getPertPixelPointOnVerticalEdgeCenter_(targetBox, 'right'),
       };
+  }
+
+  return dy >= 0
+    ? {
+      start: getPertPixelPointOnHorizontalEdgeCenter_(sourceBox, 'bottom'),
+      end: getPertPixelPointOnHorizontalEdgeCenter_(targetBox, 'top'),
     }
-
-    return {
-      start: getPertPixelPointOnVerticalEdge_(sourceBox, 'left', successorIndex, successorCount),
-      end: getPertPixelPointOnVerticalEdge_(targetBox, 'right', incomingIndex, incomingCount),
+    : {
+      start: getPertPixelPointOnHorizontalEdgeCenter_(sourceBox, 'top'),
+      end: getPertPixelPointOnHorizontalEdgeCenter_(targetBox, 'bottom'),
     };
-  }
-
-  if (dy >= 0) {
-    return {
-      start: getPertPixelPointOnHorizontalEdge_(sourceBox, 'bottom', successorIndex, successorCount),
-      end: getPertPixelPointOnHorizontalEdge_(targetBox, 'top', incomingIndex, incomingCount),
-    };
-  }
-
-  return {
-    start: getPertPixelPointOnHorizontalEdge_(sourceBox, 'top', successorIndex, successorCount),
-    end: getPertPixelPointOnHorizontalEdge_(targetBox, 'bottom', incomingIndex, incomingCount),
-  };
 }
 
 function getPertNodePixelBox_(position) {
@@ -2108,9 +2093,23 @@ function getPertPixelPointOnVerticalEdge_(box, edge, routeIndex, routeCount) {
   };
 }
 
+function getPertPixelPointOnVerticalEdgeCenter_(box, edge) {
+  return {
+    x: edge === 'right' ? box.right : box.left,
+    y: (box.top + box.bottom) / 2,
+  };
+}
+
 function getPertPixelPointOnHorizontalEdge_(box, edge, routeIndex, routeCount) {
   return {
     x: getPertDistributedPixelCoordinate_(box.left, box.right, routeIndex, routeCount),
+    y: edge === 'bottom' ? box.bottom : box.top,
+  };
+}
+
+function getPertPixelPointOnHorizontalEdgeCenter_(box, edge) {
+  return {
+    x: (box.left + box.right) / 2,
     y: edge === 'bottom' ? box.bottom : box.top,
   };
 }
@@ -2125,17 +2124,22 @@ function getPertDistributedPixelCoordinate_(start, end, routeIndex, routeCount) 
 }
 
 function applyPertArrowEndpointGap_(startPoint, endPoint, gap) {
+  applyPertArrowEndpointGaps_(startPoint, endPoint, gap, gap);
+}
+
+function applyPertArrowEndpointGaps_(startPoint, endPoint, startGap, endGap) {
   const dx = endPoint.x - startPoint.x;
   const dy = endPoint.y - startPoint.y;
   const distance = Math.sqrt(dx * dx + dy * dy);
-  if (!distance || distance <= gap * 2) return;
+  const totalGap = Math.max(0, startGap || 0) + Math.max(0, endGap || 0);
+  if (!distance || distance <= totalGap) return;
 
-  const offsetX = dx / distance * gap;
-  const offsetY = dy / distance * gap;
-  startPoint.x += offsetX;
-  startPoint.y += offsetY;
-  endPoint.x -= offsetX;
-  endPoint.y -= offsetY;
+  const unitX = dx / distance;
+  const unitY = dy / distance;
+  startPoint.x += unitX * Math.max(0, startGap || 0);
+  startPoint.y += unitY * Math.max(0, startGap || 0);
+  endPoint.x -= unitX * Math.max(0, endGap || 0);
+  endPoint.y -= unitY * Math.max(0, endGap || 0);
 }
 
 function createPertArrowRouteSvgBlob_(width, height, points) {
@@ -2974,7 +2978,7 @@ function getPertWebAppData() {
             route.incomingIndex,
             route.incomingCount
           );
-          applyPertArrowEndpointGap_(points.start, points.end, PERT_ARROW_IMAGE_NODE_GAP_PX);
+          applyPertArrowEndpointGaps_(points.start, points.end, PERT_ARROW_IMAGE_NODE_GAP_PX, PERT_ARROW_IMAGE_TARGET_GAP_PX);
           return {
             start: points.start,
             end: points.end,
