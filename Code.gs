@@ -34,7 +34,8 @@ const PERT_MIN_TERMINAL_ROW_SPACING = 8;
 const PERT_NODE_COLUMN_SPACING = 7;
 const PERT_NODE_HEIGHT = 3;
 const PERT_NODE_WIDTH = 3;
-const PERT_ARROW_COLOR = '#000000';
+const PERT_ARROW_COLOR = '#2aa84a';
+const PERT_CRITICAL_ARROW_COLOR = '#ff0000';
 const PERT_ARROW_FONT_SIZE = 12;
 const PERT_ARROW_START_PADDING = 2;
 const PERT_ARROW_END_PADDING = 2;
@@ -66,12 +67,11 @@ const PERT_MAX_IMAGE_ARROW_COUNT = 200;
 const PERT_IMAGE_ARROW_MAX_NODE_COUNT = 250;
 const PERT_USE_IMAGE_ARROWS = true;
 const PERT_ARROW_IMAGE_STROKE_WIDTH = 2;
+const PERT_ARROW_IMAGE_HEAD_LENGTH = 9;
+const PERT_ARROW_IMAGE_HEAD_HALF_WIDTH = 5;
 const PERT_ARROW_GRID_CONNECTOR_GLYPHS = new Set(['━', '┃', '┼']);
 const PERT_USE_BORDER_ARROW_CONNECTORS = false;
-const PERT_ARROW_IMAGE_HEAD_LENGTH = 12;
-const PERT_ARROW_IMAGE_HEAD_HALF_WIDTH = 7;
 const PERT_ARROW_MARKER_SIZE = 12;
-const PERT_ARROW_RGB = parsePertHexColor_(PERT_ARROW_COLOR);
 const PERT_WEB_ARROW_STROKE_WIDTH = 3;
 const DEFAULT_WBS_SHEET_NAME = 'WBS';
 const DEFAULT_SCHED_SHEET_NAME = 'Scheduling';
@@ -1440,7 +1440,8 @@ function renderPertArrows_(pert, schedule, layout, rowsNeeded, columnsNeeded) {
       route.incomingCount,
       layout.positions,
       route.sourceId,
-      route.targetId
+      route.targetId,
+      route.color
     );
 
     if (!wasRenderedAsImage) {
@@ -1493,11 +1494,18 @@ function buildPertArrowRoutes_(schedule, layout) {
         successorCount,
         incomingIndex: incomingIndexByPredecessor.get(activity.id) || 0,
         incomingCount: Math.max(1, successor.predecessors.length),
+        color: getPertArrowColor_(activity, successor),
       });
     });
   });
 
   return arrowRoutes;
+}
+
+function getPertArrowColor_(sourceActivity, targetActivity) {
+  return sourceActivity.isCritical && targetActivity.isCritical && sourceActivity.earlyFinish === targetActivity.earlyStart
+    ? PERT_CRITICAL_ARROW_COLOR
+    : PERT_ARROW_COLOR;
 }
 
 function shouldRenderPertImageArrows_(schedule, arrowRoutes) {
@@ -1624,7 +1632,7 @@ function renderPertArrowGridInChunks_(pert, arrowGrid, rowsNeeded, columnsNeeded
   }
 }
 
-function renderPertImageArrow_(pert, sourcePosition, targetPosition, successorIndex, successorCount, incomingIndex, incomingCount, positions, sourceId, targetId) {
+function renderPertImageArrow_(pert, sourcePosition, targetPosition, successorIndex, successorCount, incomingIndex, incomingCount, positions, sourceId, targetId, arrowColor) {
   const connectionPoints = getPertArrowPixelConnectionPoints_(
     sourcePosition,
     targetPosition,
@@ -1657,8 +1665,8 @@ function renderPertImageArrow_(pert, sourcePosition, targetPosition, successorIn
   const xOffset = Math.max(0, Math.round(minX - (anchorCol - 1) * PERT_CELL_WIDTH_PX));
   const yOffset = Math.max(0, Math.round(minY - (anchorRow - 1) * PERT_CELL_HEIGHT_PX));
   const blobFactories = [
-    () => createPertArrowRoutePngBlob_(imageWidth, imageHeight, localizedRoutePoints),
-    () => createPertArrowRouteSvgBlob_(imageWidth, imageHeight, localizedRoutePoints),
+    () => createPertArrowRoutePngBlob_(imageWidth, imageHeight, localizedRoutePoints, arrowColor),
+    () => createPertArrowRouteSvgBlob_(imageWidth, imageHeight, localizedRoutePoints, arrowColor),
   ];
 
   for (let index = 0; index < blobFactories.length; index++) {
@@ -1815,15 +1823,16 @@ function canRenderPertArrowImage_(width, height) {
   return pixelCount <= PERT_MAX_ARROW_IMAGE_PIXELS && estimatedPngBytes <= PERT_MAX_ARROW_IMAGE_BYTES;
 }
 
-function createPertArrowPngBlob_(width, height, startX, startY, endX, endY) {
+function createPertArrowPngBlob_(width, height, startX, startY, endX, endY, arrowColor) {
   return createPertArrowRoutePngBlob_(width, height, [
     { x: startX, y: startY },
     { x: endX, y: endY },
-  ]);
+  ], arrowColor);
 }
 
-function createPertArrowRoutePngBlob_(width, height, points) {
+function createPertArrowRoutePngBlob_(width, height, points, arrowColor) {
   const rgba = createTransparentRgbaBuffer_(width, height);
+  const arrowRgb = parsePertHexColor_(arrowColor || PERT_ARROW_COLOR);
 
   for (let index = 1; index < points.length; index++) {
     drawPertPngLine_(
@@ -1834,7 +1843,8 @@ function createPertArrowRoutePngBlob_(width, height, points) {
       points[index - 1].y,
       points[index].x,
       points[index].y,
-      PERT_ARROW_IMAGE_STROKE_WIDTH
+      PERT_ARROW_IMAGE_STROKE_WIDTH,
+      arrowRgb
     );
   }
 
@@ -1849,7 +1859,8 @@ function createPertArrowRoutePngBlob_(width, height, points) {
     arrowEndPoint.x,
     arrowEndPoint.y,
     PERT_ARROW_IMAGE_HEAD_LENGTH,
-    PERT_ARROW_IMAGE_HEAD_HALF_WIDTH
+    PERT_ARROW_IMAGE_HEAD_HALF_WIDTH,
+    arrowRgb
   );
 
   return Utilities.newBlob(createPngBytes_(width, height, rgba), 'image/png', PERT_ARROW_IMAGE_FILE_NAME);
@@ -1861,7 +1872,7 @@ function createTransparentRgbaBuffer_(width, height) {
   return Array.from({ length: pixelBytes }, () => 0);
 }
 
-function drawPertPngLine_(rgba, width, height, startX, startY, endX, endY, thickness) {
+function drawPertPngLine_(rgba, width, height, startX, startY, endX, endY, thickness, arrowRgb) {
   const halfThickness = Math.max(0.5, thickness / 2);
   const minX = Math.max(0, Math.floor(Math.min(startX, endX) - halfThickness));
   const maxX = Math.min(width - 1, Math.ceil(Math.max(startX, endX) + halfThickness));
@@ -1872,7 +1883,7 @@ function drawPertPngLine_(rgba, width, height, startX, startY, endX, endY, thick
   for (let y = minY; y <= maxY; y++) {
     for (let x = minX; x <= maxX; x++) {
       if (getSquaredDistanceToPertLineSegment_(x + 0.5, y + 0.5, startX, startY, endX, endY) <= radiusSquared) {
-        setPertPngPixel_(rgba, width, height, x, y);
+        setPertPngPixel_(rgba, width, height, x, y, arrowRgb);
       }
     }
   }
@@ -1898,7 +1909,7 @@ function getSquaredDistanceToPertLineSegment_(pointX, pointY, startX, startY, en
   return distanceX * distanceX + distanceY * distanceY;
 }
 
-function drawPertPngArrowHead_(rgba, width, height, startX, startY, endX, endY, length, halfWidth) {
+function drawPertPngArrowHead_(rgba, width, height, startX, startY, endX, endY, length, halfWidth, arrowRgb) {
   const angle = Math.atan2(endY - startY, endX - startX);
   const baseX = endX - Math.cos(angle) * length;
   const baseY = endY - Math.sin(angle) * length;
@@ -1910,10 +1921,10 @@ function drawPertPngArrowHead_(rgba, width, height, startX, startY, endX, endY, 
     { x: baseX - normalX * halfWidth, y: baseY - normalY * halfWidth },
   ];
 
-  fillPertPngTriangle_(rgba, width, height, points);
+  fillPertPngTriangle_(rgba, width, height, points, arrowRgb);
 }
 
-function fillPertPngTriangle_(rgba, width, height, points) {
+function fillPertPngTriangle_(rgba, width, height, points, arrowRgb) {
   const minX = Math.max(0, Math.floor(Math.min(points[0].x, points[1].x, points[2].x)));
   const maxX = Math.min(width - 1, Math.ceil(Math.max(points[0].x, points[1].x, points[2].x)));
   const minY = Math.max(0, Math.floor(Math.min(points[0].y, points[1].y, points[2].y)));
@@ -1922,7 +1933,7 @@ function fillPertPngTriangle_(rgba, width, height, points) {
   for (let y = minY; y <= maxY; y++) {
     for (let x = minX; x <= maxX; x++) {
       if (isPointInPertTriangle_(x + 0.5, y + 0.5, points)) {
-        setPertPngPixel_(rgba, width, height, x, y);
+        setPertPngPixel_(rgba, width, height, x, y, arrowRgb);
       }
     }
   }
@@ -1971,13 +1982,14 @@ function drawPertPngCircle_(rgba, width, height, centerX, centerY, radius) {
   }
 }
 
-function setPertPngPixel_(rgba, width, height, x, y) {
+function setPertPngPixel_(rgba, width, height, x, y, arrowRgb) {
   if (x < 0 || x >= width || y < 0 || y >= height) return;
 
+  arrowRgb = arrowRgb || parsePertHexColor_(PERT_ARROW_COLOR);
   const offset = (y * width + x) * 4;
-  rgba[offset] = PERT_ARROW_RGB.red;
-  rgba[offset + 1] = PERT_ARROW_RGB.green;
-  rgba[offset + 2] = PERT_ARROW_RGB.blue;
+  rgba[offset] = arrowRgb.red;
+  rgba[offset + 1] = arrowRgb.green;
+  rgba[offset + 2] = arrowRgb.blue;
   rgba[offset + 3] = 255;
 }
 
@@ -2180,35 +2192,36 @@ function applyPertArrowEndpointGaps_(startPoint, endPoint, startGap, endGap) {
   endPoint.y -= unitY * Math.max(0, endGap || 0);
 }
 
-function createPertArrowRouteSvgBlob_(width, height, points) {
+function createPertArrowRouteSvgBlob_(width, height, points, arrowColor) {
   return Utilities.newBlob(
-    createPertArrowRouteSvg_(width, height, points),
+    createPertArrowRouteSvg_(width, height, points, arrowColor),
     'image/svg+xml',
     PERT_ARROW_SVG_IMAGE_FILE_NAME
   );
 }
 
-function createPertArrowRouteSvg_(width, height, points) {
+function createPertArrowRouteSvg_(width, height, points, arrowColor) {
   const safeWidth = Math.max(1, Math.ceil(width));
   const safeHeight = Math.max(1, Math.ceil(height));
+  const safeArrowColor = arrowColor || PERT_ARROW_COLOR;
   const pointList = points.map(point => `${formatPertSvgNumber_(point.x)},${formatPertSvgNumber_(point.y)}`).join(' ');
   return [
     `<svg xmlns="http://www.w3.org/2000/svg" width="${safeWidth}" height="${safeHeight}" viewBox="0 0 ${safeWidth} ${safeHeight}">`,
     '<defs>',
     `<marker id="arrowhead" markerWidth="${PERT_ARROW_MARKER_SIZE}" markerHeight="${PERT_ARROW_MARKER_SIZE}" refX="11" refY="6" orient="auto" markerUnits="userSpaceOnUse">`,
-    `<path d="M 0 0 L 12 6 L 0 12 z" fill="${PERT_ARROW_COLOR}"/>`,
+    `<path d="M 0 0 L 12 6 L 0 12 z" fill="${safeArrowColor}"/>`,
     '</marker>',
     '</defs>',
-    `<polyline points="${pointList}" fill="none" stroke="${PERT_ARROW_COLOR}" stroke-width="${PERT_ARROW_IMAGE_STROKE_WIDTH}" marker-end="url(#arrowhead)" stroke-linecap="round" stroke-linejoin="round"/>`,
+    `<polyline points="${pointList}" fill="none" stroke="${safeArrowColor}" stroke-width="${PERT_ARROW_IMAGE_STROKE_WIDTH}" marker-end="url(#arrowhead)" stroke-linecap="round" stroke-linejoin="round"/>`,
     '</svg>',
   ].join('');
 }
 
-function createPertArrowSvg_(width, height, startX, startY, endX, endY) {
+function createPertArrowSvg_(width, height, startX, startY, endX, endY, arrowColor) {
   return createPertArrowRouteSvg_(width, height, [
     { x: startX, y: startY },
     { x: endX, y: endY },
-  ]);
+  ], arrowColor);
 }
 
 function formatPertSvgNumber_(value) {
@@ -3062,6 +3075,7 @@ function getPertWebAppData() {
               route.sourceId,
               route.targetId
             ),
+            color: route.color,
           };
         });
 
@@ -3151,17 +3165,21 @@ function renderDiagram(sheet) {
   svg.setAttribute('viewBox', '0 0 ' + sheet.width + ' ' + sheet.height);
   svg.setAttribute('width', sheet.width);
   svg.setAttribute('height', sheet.height);
-  svg.innerHTML = '<defs><marker id="arrow" markerWidth="12" markerHeight="12" refX="11" refY="6" orient="auto"><path d="M0,0 L12,6 L0,12 z" fill="${PERT_ARROW_COLOR}"/></marker></defs>';
+  svg.innerHTML = '<defs>' +
+    '<marker id="arrow-normal" markerWidth="12" markerHeight="12" refX="11" refY="6" orient="auto"><path d="M0,0 L12,6 L0,12 z" fill="${PERT_ARROW_COLOR}"/></marker>' +
+    '<marker id="arrow-critical" markerWidth="12" markerHeight="12" refX="11" refY="6" orient="auto"><path d="M0,0 L12,6 L0,12 z" fill="${PERT_CRITICAL_ARROW_COLOR}"/></marker>' +
+    '</defs>';
   sheet.links.forEach(link => {
     const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
     const points = link.routePoints || [link.start, link.end];
     path.setAttribute('d', points.map((point, index) => (index === 0 ? 'M ' : 'L ') + point.x + ' ' + point.y).join(' '));
     path.setAttribute('fill', 'none');
-    path.setAttribute('stroke', '${PERT_ARROW_COLOR}');
+    const arrowColor = link.color || '${PERT_ARROW_COLOR}';
+    path.setAttribute('stroke', arrowColor);
     path.setAttribute('stroke-width', '${PERT_WEB_ARROW_STROKE_WIDTH}');
     path.setAttribute('stroke-linecap', 'round');
     path.setAttribute('stroke-linejoin', 'round');
-    path.setAttribute('marker-end', 'url(#arrow)');
+    path.setAttribute('marker-end', arrowColor === '${PERT_CRITICAL_ARROW_COLOR}' ? 'url(#arrow-critical)' : 'url(#arrow-normal)');
     svg.appendChild(path);
   });
   sheet.activities.forEach(activity => svg.appendChild(createNode(activity)));
