@@ -42,6 +42,7 @@ const PERT_FIRST_NODE_ROW = 4;
 const PERT_FIRST_NODE_COLUMN = 1;
 const PERT_ARROW_IMAGE_ALT_TEXT = 'Generated PERT dependency arrow';
 const PERT_ARROW_IMAGE_FILE_NAME = 'pert-arrow.png';
+const PERT_ARROW_SVG_IMAGE_FILE_NAME = 'pert-arrow.svg';
 const PERT_CELL_WIDTH_PX = 80;
 const PERT_CELL_HEIGHT_PX = 28;
 const PERT_ARROW_IMAGE_PADDING_PX = 4;
@@ -66,6 +67,7 @@ const PERT_IMAGE_ARROW_MAX_NODE_COUNT = 250;
 const PERT_USE_IMAGE_ARROWS = true;
 const PERT_ARROW_IMAGE_STROKE_WIDTH = 2;
 const PERT_ARROW_GRID_CONNECTOR_GLYPHS = new Set(['━', '┃', '┼']);
+const PERT_USE_BORDER_ARROW_CONNECTORS = false;
 const PERT_ARROW_IMAGE_HEAD_LENGTH = 12;
 const PERT_ARROW_IMAGE_HEAD_HALF_WIDTH = 7;
 const PERT_ARROW_MARKER_SIZE = 12;
@@ -1526,10 +1528,17 @@ function renderPertArrowGrid_(pert, arrowGrid, rowsNeeded, columnsNeeded) {
 }
 
 function createPertArrowDisplayGrid_(arrowGrid) {
-  return arrowGrid.map(row => row.map(glyph => PERT_ARROW_GRID_CONNECTOR_GLYPHS.has(glyph) ? '' : glyph));
+  // Keep fallback connectors as centered glyphs. The old fallback hid these
+  // glyphs and drew spreadsheet borders instead, which made horizontal arrows
+  // sit on the top edge of the cell while the arrowhead stayed vertically
+  // centered. That mismatch is why arrows looked like a floating triangle under
+  // a line in Google Sheets when image arrows were unavailable.
+  return arrowGrid.map(row => row.slice());
 }
 
 function stylePertArrowGridConnectors_(pert, arrowGrid) {
+  if (!PERT_USE_BORDER_ARROW_CONNECTORS) return;
+
   stylePertHorizontalArrowGridConnectors_(pert, arrowGrid);
   stylePertVerticalArrowGridConnectors_(pert, arrowGrid);
 }
@@ -1639,28 +1648,32 @@ function renderPertImageArrow_(pert, sourcePosition, targetPosition, successorIn
   const imageHeight = Math.max(1, Math.ceil(maxY - minY));
   if (!canRenderPertArrowImage_(imageWidth, imageHeight)) return false;
 
-  try {
-    const localizedRoutePoints = routePoints.map(point => ({
-      x: point.x - minX,
-      y: point.y - minY,
-    }));
-    // Render as a PNG because Google Sheets reliably inserts PNG blobs as
-    // over-the-grid drawings. SVG blobs can be rejected by insertImage(),
-    // causing the code to fall back to cell-border arrows instead.
-    const blob = createPertArrowRoutePngBlob_(imageWidth, imageHeight, localizedRoutePoints);
-    const anchorCol = Math.max(1, Math.floor(minX / PERT_CELL_WIDTH_PX) + 1);
-    const anchorRow = Math.max(1, Math.floor(minY / PERT_CELL_HEIGHT_PX) + 1);
-    const xOffset = Math.max(0, Math.round(minX - (anchorCol - 1) * PERT_CELL_WIDTH_PX));
-    const yOffset = Math.max(0, Math.round(minY - (anchorRow - 1) * PERT_CELL_HEIGHT_PX));
+  const localizedRoutePoints = routePoints.map(point => ({
+    x: point.x - minX,
+    y: point.y - minY,
+  }));
+  const anchorCol = Math.max(1, Math.floor(minX / PERT_CELL_WIDTH_PX) + 1);
+  const anchorRow = Math.max(1, Math.floor(minY / PERT_CELL_HEIGHT_PX) + 1);
+  const xOffset = Math.max(0, Math.round(minX - (anchorCol - 1) * PERT_CELL_WIDTH_PX));
+  const yOffset = Math.max(0, Math.round(minY - (anchorRow - 1) * PERT_CELL_HEIGHT_PX));
+  const blobFactories = [
+    () => createPertArrowRoutePngBlob_(imageWidth, imageHeight, localizedRoutePoints),
+    () => createPertArrowRouteSvgBlob_(imageWidth, imageHeight, localizedRoutePoints),
+  ];
 
-    pert.insertImage(blob, anchorCol, anchorRow, xOffset, yOffset)
-      .setAltTextTitle(PERT_ARROW_IMAGE_ALT_TEXT)
-      .setWidth(imageWidth)
-      .setHeight(imageHeight);
-    return true;
-  } catch (error) {
-    return false;
+  for (let index = 0; index < blobFactories.length; index++) {
+    try {
+      pert.insertImage(blobFactories[index](), anchorCol, anchorRow, xOffset, yOffset)
+        .setAltTextTitle(PERT_ARROW_IMAGE_ALT_TEXT)
+        .setWidth(imageWidth)
+        .setHeight(imageHeight);
+      return true;
+    } catch (error) {
+      // Try the next over-the-grid image format before falling back to cells.
+    }
   }
+
+  return false;
 }
 
 
@@ -1972,11 +1985,20 @@ function createPngBytes_(width, height, rgba) {
     }
   }
 
-  return []
+  const unsignedBytes = []
     .concat([137, 80, 78, 71, 13, 10, 26, 10])
     .concat(createPngChunk_('IHDR', uint32Bytes_(width).concat(uint32Bytes_(height), [8, 6, 0, 0, 0])))
     .concat(createPngChunk_('IDAT', createZlibStoredBlock_(rawRows)))
     .concat(createPngChunk_('IEND', []));
+
+  return toAppsScriptSignedBytes_(unsignedBytes);
+}
+
+function toAppsScriptSignedBytes_(bytes) {
+  return bytes.map(byte => {
+    const normalizedByte = byte & 0xff;
+    return normalizedByte > 127 ? normalizedByte - 256 : normalizedByte;
+  });
 }
 
 function createPngChunk_(type, data) {
@@ -2156,7 +2178,7 @@ function createPertArrowRouteSvgBlob_(width, height, points) {
   return Utilities.newBlob(
     createPertArrowRouteSvg_(width, height, points),
     'image/svg+xml',
-    PERT_ARROW_IMAGE_FILE_NAME
+    PERT_ARROW_SVG_IMAGE_FILE_NAME
   );
 }
 
