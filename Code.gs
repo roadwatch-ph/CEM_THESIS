@@ -41,7 +41,7 @@ const PERT_ARROW_END_PADDING = 2;
 const PERT_FIRST_NODE_ROW = 4;
 const PERT_FIRST_NODE_COLUMN = 1;
 const PERT_ARROW_IMAGE_ALT_TEXT = 'Generated PERT dependency arrow';
-const PERT_ARROW_IMAGE_FILE_NAME = 'pert-arrow.svg';
+const PERT_ARROW_IMAGE_FILE_NAME = 'pert-arrow.png';
 const PERT_CELL_WIDTH_PX = 80;
 const PERT_CELL_HEIGHT_PX = 28;
 const PERT_ARROW_IMAGE_PADDING_PX = 4;
@@ -69,6 +69,7 @@ const PERT_ARROW_GRID_CONNECTOR_GLYPHS = new Set(['━', '┃', '┼']);
 const PERT_ARROW_IMAGE_HEAD_LENGTH = 12;
 const PERT_ARROW_IMAGE_HEAD_HALF_WIDTH = 7;
 const PERT_ARROW_MARKER_SIZE = 12;
+const PERT_ARROW_RGB = parsePertHexColor_(PERT_ARROW_COLOR);
 const PERT_WEB_ARROW_STROKE_WIDTH = 3;
 const DEFAULT_WBS_SHEET_NAME = 'WBS';
 const DEFAULT_SCHED_SHEET_NAME = 'Scheduling';
@@ -1643,9 +1644,10 @@ function renderPertImageArrow_(pert, sourcePosition, targetPosition, successorIn
       x: point.x - minX,
       y: point.y - minY,
     }));
-    // Render the arrow as an SVG drawing instead of a rasterized PNG so the
-    // inserted sheet image remains a clean drawn line with a real arrowhead.
-    const blob = createPertArrowRouteSvgBlob_(imageWidth, imageHeight, localizedRoutePoints);
+    // Render as a PNG because Google Sheets reliably inserts PNG blobs as
+    // over-the-grid drawings. SVG blobs can be rejected by insertImage(),
+    // causing the code to fall back to cell-border arrows instead.
+    const blob = createPertArrowRoutePngBlob_(imageWidth, imageHeight, localizedRoutePoints);
     const anchorCol = Math.max(1, Math.floor(minX / PERT_CELL_WIDTH_PX) + 1);
     const anchorRow = Math.max(1, Math.floor(minY / PERT_CELL_HEIGHT_PX) + 1);
     const xOffset = Math.max(0, Math.round(minX - (anchorCol - 1) * PERT_CELL_WIDTH_PX));
@@ -1824,7 +1826,7 @@ function createPertArrowRoutePngBlob_(width, height, points) {
     PERT_ARROW_IMAGE_HEAD_HALF_WIDTH
   );
 
-  return Utilities.newBlob(createPngBytes_(width, height, rgba), 'image/png', 'pert-arrow.png');
+  return Utilities.newBlob(createPngBytes_(width, height, rgba), 'image/png', PERT_ARROW_IMAGE_FILE_NAME);
 }
 
 function createTransparentRgbaBuffer_(width, height) {
@@ -1915,6 +1917,16 @@ function getPertTriangleSignedArea_(a, b, c) {
   return (a.x - c.x) * (b.y - c.y) - (b.x - c.x) * (a.y - c.y);
 }
 
+function parsePertHexColor_(hexColor) {
+  const match = String(hexColor || '').match(/^#?([0-9a-f]{6})$/i);
+  const hex = match ? match[1] : '000000';
+  return {
+    red: parseInt(hex.slice(0, 2), 16),
+    green: parseInt(hex.slice(2, 4), 16),
+    blue: parseInt(hex.slice(4, 6), 16),
+  };
+}
+
 function drawPertPngCircle_(rgba, width, height, centerX, centerY, radius) {
   const minX = Math.max(0, Math.floor(centerX - radius));
   const maxX = Math.min(width - 1, Math.ceil(centerX + radius));
@@ -1937,9 +1949,9 @@ function setPertPngPixel_(rgba, width, height, x, y) {
   if (x < 0 || x >= width || y < 0 || y >= height) return;
 
   const offset = (y * width + x) * 4;
-  rgba[offset] = 0;
-  rgba[offset + 1] = 0;
-  rgba[offset + 2] = 0;
+  rgba[offset] = PERT_ARROW_RGB.red;
+  rgba[offset + 1] = PERT_ARROW_RGB.green;
+  rgba[offset + 2] = PERT_ARROW_RGB.blue;
   rgba[offset + 3] = 255;
 }
 
