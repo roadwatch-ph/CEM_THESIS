@@ -1686,23 +1686,66 @@ function renderPertImageArrow_(pert, sourcePosition, targetPosition, successorIn
 
 
 function getPertPreferredPixelRoutePoints_(startPoint, endPoint, successorIndex, incomingIndex, positions, sourceId, targetId) {
-  // Prefer clean, continuous PERT arrows: a single straight/diagonal segment when
-  // possible, or a short straight stem that fans into one diagonal segment. This
-  // avoids stair-step orthogonal elbows while keeping shared outgoing stems neat.
-  if (canUseDirectPertPixelRoute_(startPoint, endPoint, positions, sourceId, targetId)) {
-    return [startPoint, endPoint];
+  // Render every dependency as one continuous polyline. Prefer the shortest
+  // straight/diagonal connector first; add bends only when a node blocks that
+  // direct path, keeping the route clean and Microsoft Project/P6-like.
+  const routeCandidates = buildPertContinuousPixelRouteCandidates_(
+    startPoint,
+    endPoint,
+    successorIndex,
+    incomingIndex
+  );
+
+  for (let index = 0; index < routeCandidates.length; index++) {
+    const route = compactPertPixelRoutePoints_(routeCandidates[index]);
+    if (canUsePertPixelPolylineRoute_(route, positions, sourceId, targetId)) return route;
   }
 
-  const horizontalDistance = endPoint.x - startPoint.x;
-  if (horizontalDistance <= PERT_ARROW_IMAGE_NODE_GAP_PX) return [startPoint, endPoint];
-
-  const fanX = startPoint.x + Math.min(PERT_CELL_WIDTH_PX * 0.75, horizontalDistance / 3);
-  const fanPoint = { x: fanX, y: startPoint.y };
-  const fanRoute = compactPertPixelRoutePoints_([startPoint, fanPoint, endPoint]);
-
-  if (canUsePertPixelPolylineRoute_(fanRoute, positions, sourceId, targetId)) return fanRoute;
-
+  // If every detour would still collide, keep a single uninterrupted direct path
+  // rather than drawing disconnected fragments.
   return [startPoint, endPoint];
+}
+
+function buildPertContinuousPixelRouteCandidates_(startPoint, endPoint, successorIndex, incomingIndex) {
+  const horizontalDistance = endPoint.x - startPoint.x;
+  const verticalDistance = endPoint.y - startPoint.y;
+  const minX = Math.min(startPoint.x, endPoint.x);
+  const maxX = Math.max(startPoint.x, endPoint.x);
+  const routeOffset = Math.max(-2, Math.min(2, (successorIndex || 0) - (incomingIndex || 0))) * PERT_CELL_WIDTH_PX / 6;
+  const midpointX = minX + (maxX - minX) / 2 + routeOffset;
+  const stemX = startPoint.x + Math.max(
+    PERT_ARROW_IMAGE_NODE_GAP_PX,
+    Math.min(PERT_CELL_WIDTH_PX * 0.75, Math.abs(horizontalDistance) / 3)
+  ) * (horizontalDistance < 0 ? -1 : 1);
+  const nearTargetX = endPoint.x - Math.max(
+    PERT_ARROW_IMAGE_TARGET_GAP_PX,
+    Math.min(PERT_CELL_WIDTH_PX * 0.75, Math.abs(horizontalDistance) / 3)
+  ) * (horizontalDistance < 0 ? -1 : 1);
+
+  const candidates = [
+    [startPoint, endPoint],
+  ];
+
+  if (Math.abs(horizontalDistance) > PERT_ARROW_IMAGE_NODE_GAP_PX && Math.abs(verticalDistance) > 1) {
+    candidates.push(
+      [startPoint, { x: stemX, y: startPoint.y }, endPoint],
+      [startPoint, { x: nearTargetX, y: endPoint.y }, endPoint],
+      [startPoint, { x: midpointX, y: startPoint.y }, { x: midpointX, y: endPoint.y }, endPoint]
+    );
+  }
+
+  getPertOrthogonalPixelRouteRowCandidates_(startPoint, endPoint).forEach(routeY => {
+    candidates.push([
+      startPoint,
+      { x: stemX, y: startPoint.y },
+      { x: stemX, y: routeY },
+      { x: nearTargetX, y: routeY },
+      { x: nearTargetX, y: endPoint.y },
+      endPoint,
+    ]);
+  });
+
+  return candidates;
 }
 
 function getPertNodeAvoidingOrthogonalPixelRoutePoints_(startPoint, endPoint, successorIndex, incomingIndex, positions, sourceId, targetId) {
@@ -1764,11 +1807,26 @@ function canUsePertPixelPolylineRoute_(points, positions, sourceId, targetId) {
 }
 
 function compactPertPixelRoutePoints_(points) {
-  return points.filter((point, index) => {
+  const uniquePoints = points.filter((point, index) => {
     if (index === 0) return true;
     const previous = points[index - 1];
     return Math.round(point.x) !== Math.round(previous.x) || Math.round(point.y) !== Math.round(previous.y);
   });
+
+  return uniquePoints.filter((point, index) => {
+    if (index === 0 || index === uniquePoints.length - 1) return true;
+
+    const previous = uniquePoints[index - 1];
+    const next = uniquePoints[index + 1];
+    return !arePertPixelPointsCollinear_(previous, point, next);
+  });
+}
+
+function arePertPixelPointsCollinear_(first, middle, last) {
+  const crossProduct = (middle.x - first.x) * (last.y - middle.y) -
+    (middle.y - first.y) * (last.x - middle.x);
+
+  return Math.abs(crossProduct) < 0.01;
 }
 
 function canUseDirectPertPixelRoute_(startPoint, endPoint, positions, sourceId, targetId) {
