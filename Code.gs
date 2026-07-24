@@ -47,8 +47,8 @@ const PERT_ARROW_SVG_IMAGE_FILE_NAME = 'pert-arrow.svg';
 const PERT_CELL_WIDTH_PX = 80;
 const PERT_CELL_HEIGHT_PX = 28;
 const PERT_ARROW_IMAGE_PADDING_PX = 4;
-const PERT_ARROW_IMAGE_NODE_GAP_PX = 16;
-const PERT_ARROW_IMAGE_TARGET_GAP_PX = 1;
+const PERT_ARROW_IMAGE_NODE_GAP_PX = 0;
+const PERT_ARROW_IMAGE_TARGET_GAP_PX = 0;
 const PERT_ORTHOGONAL_ROUTE_ROW_CLEARANCE_PX = 18;
 const PERT_ORTHOGONAL_ROUTE_ROW_STEP_PX = PERT_CELL_HEIGHT_PX;
 const PERT_MAX_ORTHOGONAL_ROUTE_ROW_ATTEMPTS = 12;
@@ -2562,14 +2562,14 @@ function getPertNodeColumn_(position) {
 }
 
 function renderPertHorizontalArrowLine_(pert, row, startCol, arrowHeadCol) {
-  if (arrowHeadCol > startCol) {
-    renderPertHorizontalConnector_(pert, row, startCol, arrowHeadCol - 1);
+  if (arrowHeadCol >= startCol) {
+    renderPertHorizontalConnector_(pert, row, startCol, arrowHeadCol);
   }
 }
 
 function drawPertHorizontalArrowLine_(arrowGrid, row, startCol, arrowHeadCol) {
-  if (arrowHeadCol > startCol) {
-    drawPertHorizontalConnector_(arrowGrid, row, startCol, arrowHeadCol - 1);
+  if (arrowHeadCol >= startCol) {
+    drawPertHorizontalConnector_(arrowGrid, row, startCol, arrowHeadCol);
   }
 
   setPertArrowGlyph_(arrowGrid, row, arrowHeadCol, '▶');
