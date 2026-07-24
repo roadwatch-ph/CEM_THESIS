@@ -34,7 +34,7 @@ const PERT_MIN_TERMINAL_ROW_SPACING = 8;
 const PERT_NODE_COLUMN_SPACING = 7;
 const PERT_NODE_HEIGHT = 3;
 const PERT_NODE_WIDTH = 3;
-const PERT_ARROW_COLOR = '#000000';
+const PERT_ARROW_COLOR = '#5f6368';
 const PERT_ARROW_FONT_SIZE = 12;
 const PERT_ARROW_START_PADDING = 2;
 const PERT_ARROW_END_PADDING = 2;
@@ -64,12 +64,12 @@ const PERT_MAX_DIRECT_ARROW_RENDER_CELLS = 200000;
 const PERT_MAX_IMAGE_ARROW_COUNT = 200;
 const PERT_IMAGE_ARROW_MAX_NODE_COUNT = 250;
 const PERT_USE_IMAGE_ARROWS = true;
-const PERT_ARROW_IMAGE_STROKE_WIDTH = 2;
+const PERT_ARROW_IMAGE_STROKE_WIDTH = 3;
 const PERT_ARROW_GRID_CONNECTOR_GLYPHS = new Set(['━', '┃', '┼']);
-const PERT_ARROW_IMAGE_HEAD_LENGTH = 10;
-const PERT_ARROW_IMAGE_HEAD_HALF_WIDTH = 6;
+const PERT_ARROW_IMAGE_HEAD_LENGTH = 12;
+const PERT_ARROW_IMAGE_HEAD_HALF_WIDTH = 7;
 const PERT_ARROW_MARKER_SIZE = 12;
-const PERT_WEB_ARROW_STROKE_WIDTH = 2;
+const PERT_WEB_ARROW_STROKE_WIDTH = 3;
 const DEFAULT_WBS_SHEET_NAME = 'WBS';
 const DEFAULT_SCHED_SHEET_NAME = 'Scheduling';
 const DEFAULT_PERT_SHEET_NAME = 'PERT Diagram';
@@ -1643,7 +1643,9 @@ function renderPertImageArrow_(pert, sourcePosition, targetPosition, successorIn
       x: point.x - minX,
       y: point.y - minY,
     }));
-    const blob = createPertArrowRoutePngBlob_(imageWidth, imageHeight, localizedRoutePoints);
+    // Render the arrow as an SVG drawing instead of a rasterized PNG so the
+    // inserted sheet image remains a clean drawn line with a real arrowhead.
+    const blob = createPertArrowRouteSvgBlob_(imageWidth, imageHeight, localizedRoutePoints);
     const anchorCol = Math.max(1, Math.floor(minX / PERT_CELL_WIDTH_PX) + 1);
     const anchorRow = Math.max(1, Math.floor(minY / PERT_CELL_HEIGHT_PX) + 1);
     const xOffset = Math.max(0, Math.round(minX - (anchorCol - 1) * PERT_CELL_WIDTH_PX));
@@ -3080,14 +3082,16 @@ function renderDiagram(sheet) {
   svg.setAttribute('viewBox', '0 0 ' + sheet.width + ' ' + sheet.height);
   svg.setAttribute('width', sheet.width);
   svg.setAttribute('height', sheet.height);
-  svg.innerHTML = '<defs><marker id="arrow" markerWidth="12" markerHeight="12" refX="11" refY="6" orient="auto"><path d="M0,0 L12,6 L0,12 z" fill="#111827"/></marker></defs>';
+  svg.innerHTML = '<defs><marker id="arrow" markerWidth="12" markerHeight="12" refX="11" refY="6" orient="auto"><path d="M0,0 L12,6 L0,12 z" fill="${PERT_ARROW_COLOR}"/></marker></defs>';
   sheet.links.forEach(link => {
     const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
     const points = link.routePoints || [link.start, link.end];
     path.setAttribute('d', points.map((point, index) => (index === 0 ? 'M ' : 'L ') + point.x + ' ' + point.y).join(' '));
     path.setAttribute('fill', 'none');
-    path.setAttribute('stroke', '#111827');
+    path.setAttribute('stroke', '${PERT_ARROW_COLOR}');
     path.setAttribute('stroke-width', '${PERT_WEB_ARROW_STROKE_WIDTH}');
+    path.setAttribute('stroke-linecap', 'round');
+    path.setAttribute('stroke-linejoin', 'round');
     path.setAttribute('marker-end', 'url(#arrow)');
     svg.appendChild(path);
   });
