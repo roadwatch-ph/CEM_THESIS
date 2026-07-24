@@ -70,7 +70,7 @@ const PERT_ARROW_IMAGE_STROKE_WIDTH = 2;
 const PERT_ARROW_IMAGE_HEAD_LENGTH = 9;
 const PERT_ARROW_IMAGE_HEAD_HALF_WIDTH = 5;
 const PERT_ARROW_GRID_CONNECTOR_GLYPHS = new Set(['━', '┃', '┼']);
-const PERT_USE_BORDER_ARROW_CONNECTORS = false;
+const PERT_USE_BORDER_ARROW_CONNECTORS = true;
 const PERT_ARROW_MARKER_SIZE = 12;
 const PERT_WEB_ARROW_STROKE_WIDTH = 3;
 const DEFAULT_WBS_SHEET_NAME = 'WBS';
@@ -1536,12 +1536,11 @@ function renderPertArrowGrid_(pert, arrowGrid, rowsNeeded, columnsNeeded) {
 }
 
 function createPertArrowDisplayGrid_(arrowGrid) {
-  // Keep fallback connectors as centered glyphs. The old fallback hid these
-  // glyphs and drew spreadsheet borders instead, which made horizontal arrows
-  // sit on the top edge of the cell while the arrowhead stayed vertically
-  // centered. That mismatch is why arrows looked like a floating triangle under
-  // a line in Google Sheets when image arrows were unavailable.
-  return arrowGrid.map(row => row.slice());
+  // When over-the-grid image arrows cannot be inserted, draw cell connectors
+  // with borders instead of visible glyphs. Large PERT cells make diagonal and
+  // box-drawing characters look like scattered green marks, while borders stay
+  // continuous across cells. Arrow heads and turns remain as centered glyphs.
+  return arrowGrid.map(row => row.map(glyph => PERT_ARROW_GRID_CONNECTOR_GLYPHS.has(glyph) ? '' : glyph));
 }
 
 function stylePertArrowGridConnectors_(pert, arrowGrid) {
@@ -2268,17 +2267,11 @@ function drawPertSmartArrow_(arrowGrid, sourcePosition, targetPosition, successo
     return;
   }
 
-  if (canDrawPertContinuousRoute_(arrowGrid, startPoint, endPoint, occupiedNodeCells)) {
-    drawPertStraightOrDiagonalArrow_(arrowGrid, startPoint, endPoint);
-    return;
-  }
-
-  if (canDrawPertDiagonalRoute_(arrowGrid, startPoint, endPoint, occupiedNodeCells)) {
-    drawPertDiagonalArrow_(arrowGrid, startPoint, endPoint);
-    return;
-  }
-
-  drawPertStraightOrDiagonalArrow_(arrowGrid, startPoint, endPoint);
+  // The grid renderer is only a fallback for cases where image arrows cannot be
+  // inserted. Prefer orthogonal border routes here because spreadsheet cells do
+  // not have a native continuous diagonal line primitive; diagonal glyphs render
+  // as disconnected slashes in large cells.
+  drawPertOrthogonalSmartArrow_(arrowGrid, startPoint, endPoint, successorIndex, incomingIndex, occupiedNodeCells);
 }
 
 
