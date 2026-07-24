@@ -766,7 +766,7 @@ function renderPertDiagram_(pert, schedule) {
   breakApartOverlappingMergedRanges_(pertDescriptionRange);
   pertDescriptionRange
     .mergeAcross()
-    .setValue('Each node shows ES, Duration, EF on top; Activity ID in the middle; and LS, Slack, LF on the bottom. Arrows are rendered as spreadsheet-safe connectors with separate entry points for multiple predecessors.')
+    .setValue('Each node shows ES, Duration, EF on top; Activity ID in the middle; and LS, Slack, LF on the bottom. Arrows are rendered as continuous straight/diagonal connectors, with shared stems when dependencies fan out.')
     .setHorizontalAlignment('center')
     .setWrap(true)
     .setBackground('#ddebf7');
@@ -1679,17 +1679,23 @@ function renderPertImageArrow_(pert, sourcePosition, targetPosition, successorIn
 
 
 function getPertPreferredPixelRoutePoints_(startPoint, endPoint, successorIndex, incomingIndex, positions, sourceId, targetId) {
-  // Route image/web PERT arrows through a short shared horizontal stem before
-  // fanning out to successor nodes. This mirrors the expected hand-drawn PERT
-  // style where multiple outgoing dependencies branch from a common point.
-  const horizontalDistance = endPoint.x - startPoint.x;
+  // Prefer clean, continuous PERT arrows: a single straight/diagonal segment when
+  // possible, or a short straight stem that fans into one diagonal segment. This
+  // avoids stair-step orthogonal elbows while keeping shared outgoing stems neat.
+  if (canUseDirectPertPixelRoute_(startPoint, endPoint, positions, sourceId, targetId)) {
+    return [startPoint, endPoint];
+  }
 
+  const horizontalDistance = endPoint.x - startPoint.x;
   if (horizontalDistance <= PERT_ARROW_IMAGE_NODE_GAP_PX) return [startPoint, endPoint];
 
   const fanX = startPoint.x + Math.min(PERT_CELL_WIDTH_PX * 0.75, horizontalDistance / 3);
   const fanPoint = { x: fanX, y: startPoint.y };
+  const fanRoute = compactPertPixelRoutePoints_([startPoint, fanPoint, endPoint]);
 
-  return compactPertPixelRoutePoints_([startPoint, fanPoint, endPoint]);
+  if (canUsePertPixelPolylineRoute_(fanRoute, positions, sourceId, targetId)) return fanRoute;
+
+  return [startPoint, endPoint];
 }
 
 function getPertNodeAvoidingOrthogonalPixelRoutePoints_(startPoint, endPoint, successorIndex, incomingIndex, positions, sourceId, targetId) {
@@ -2249,12 +2255,17 @@ function drawPertSmartArrow_(arrowGrid, sourcePosition, targetPosition, successo
     return;
   }
 
+  if (canDrawPertContinuousRoute_(arrowGrid, startPoint, endPoint, occupiedNodeCells)) {
+    drawPertStraightOrDiagonalArrow_(arrowGrid, startPoint, endPoint);
+    return;
+  }
+
   if (canDrawPertDiagonalRoute_(arrowGrid, startPoint, endPoint, occupiedNodeCells)) {
     drawPertDiagonalArrow_(arrowGrid, startPoint, endPoint);
     return;
   }
 
-  drawPertOrthogonalSmartArrow_(arrowGrid, startPoint, endPoint, successorIndex || 0, incomingIndex || 0, occupiedNodeCells);
+  drawPertStraightOrDiagonalArrow_(arrowGrid, startPoint, endPoint);
 }
 
 
@@ -2411,6 +2422,34 @@ function doesPertHorizontalRouteHitNode_(row, startCol, endCol, occupiedNodeCell
   return false;
 }
 
+
+function canDrawPertContinuousRoute_(arrowGrid, startPoint, endPoint, occupiedNodeCells) {
+  if (endPoint.col <= startPoint.col) return false;
+  if (!occupiedNodeCells) return true;
+
+  const visitedCells = getPertStraightOrDiagonalRouteCells_(startPoint, endPoint);
+  return visitedCells.every(cell => !occupiedNodeCells.has(getPertCellKey_(cell.row, cell.col)));
+}
+
+function getPertStraightOrDiagonalRouteCells_(startPoint, endPoint) {
+  const rowDelta = endPoint.row - startPoint.row;
+  const colDelta = endPoint.col - startPoint.col;
+  const steps = Math.max(Math.abs(rowDelta), Math.abs(colDelta), 1);
+  const cells = [];
+  const seen = new Set();
+
+  for (let stepIndex = 0; stepIndex <= steps; stepIndex++) {
+    const row = Math.round(startPoint.row + rowDelta * stepIndex / steps);
+    const col = Math.round(startPoint.col + colDelta * stepIndex / steps);
+    const key = getPertCellKey_(row, col);
+    if (seen.has(key)) continue;
+
+    seen.add(key);
+    cells.push({ row, col });
+  }
+
+  return cells;
+}
 
 function canDrawPertDiagonalRoute_(arrowGrid, startPoint, endPoint, occupiedNodeCells) {
   if (endPoint.col <= startPoint.col || endPoint.row === startPoint.row) return false;
