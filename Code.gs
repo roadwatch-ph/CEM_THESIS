@@ -34,7 +34,7 @@ const PERT_MIN_TERMINAL_ROW_SPACING = 8;
 const PERT_NODE_COLUMN_SPACING = 7;
 const PERT_NODE_HEIGHT = 3;
 const PERT_NODE_WIDTH = 3;
-const PERT_ARROW_COLOR = '#5f6368';
+const PERT_ARROW_COLOR = '#000000';
 const PERT_ARROW_FONT_SIZE = 12;
 const PERT_ARROW_START_PADDING = 2;
 const PERT_ARROW_END_PADDING = 2;
@@ -1666,10 +1666,17 @@ function renderPertImageArrow_(pert, sourcePosition, targetPosition, successorIn
 
 
 function getPertPreferredPixelRoutePoints_(startPoint, endPoint, successorIndex, incomingIndex, positions, sourceId, targetId) {
-  // Keep the image/web PERT arrows as direct point-to-point connectors so the
-  // diagram matches the expected hand-drawn PERT style with clean diagonal
-  // dependency lines converging into each activity node.
-  return [startPoint, endPoint];
+  // Route image/web PERT arrows through a short shared horizontal stem before
+  // fanning out to successor nodes. This mirrors the expected hand-drawn PERT
+  // style where multiple outgoing dependencies branch from a common point.
+  const horizontalDistance = endPoint.x - startPoint.x;
+
+  if (horizontalDistance <= PERT_ARROW_IMAGE_NODE_GAP_PX) return [startPoint, endPoint];
+
+  const fanX = startPoint.x + Math.min(PERT_CELL_WIDTH_PX * 0.75, horizontalDistance / 3);
+  const fanPoint = { x: fanX, y: startPoint.y };
+
+  return compactPertPixelRoutePoints_([startPoint, fanPoint, endPoint]);
 }
 
 function getPertNodeAvoidingOrthogonalPixelRoutePoints_(startPoint, endPoint, successorIndex, incomingIndex, positions, sourceId, targetId) {
