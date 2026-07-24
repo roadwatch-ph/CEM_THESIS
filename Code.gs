@@ -640,8 +640,8 @@ function computeSchedule_(orderedActivities) {
       return Math.max(latestFinish, scheduleById.get(predecessorId).earlyFinish);
     }, 0);
 
-    const earlyStart = latestPredecessorEarlyFinish + 1;
-    const earlyFinish = earlyStart + activity.duration - 1;
+    const earlyStart = latestPredecessorEarlyFinish;
+    const earlyFinish = earlyStart + activity.duration;
 
     scheduleById.set(activity.id, {
       id: activity.id,
@@ -668,10 +668,10 @@ function computeSchedule_(orderedActivities) {
     if (successors.length === 0) {
       scheduledActivity.lateFinish = projectFinish;
     } else {
-      scheduledActivity.lateFinish = Math.min(...successors.map(successorId => scheduleById.get(successorId).lateStart - 1));
+      scheduledActivity.lateFinish = Math.min(...successors.map(successorId => scheduleById.get(successorId).lateStart));
     }
 
-    scheduledActivity.lateStart = scheduledActivity.lateFinish - scheduledActivity.duration + 1;
+    scheduledActivity.lateStart = scheduledActivity.lateFinish - scheduledActivity.duration;
     scheduledActivity.slack = scheduledActivity.lateStart - scheduledActivity.earlyStart;
     scheduledActivity.isCritical = scheduledActivity.slack === 0;
   });
@@ -716,10 +716,10 @@ function renderSchedule_(sched, schedule) {
     .setVerticalAlignment('middle');
 
   const backgrounds = schedule.map(activity => timeline.map(day => {
-    return day >= activity.earlyStart && day <= activity.earlyFinish ? '#4CAF50' : null;
+    return day > activity.earlyStart && day <= activity.earlyFinish ? '#4CAF50' : null;
   }));
   const ganttValues = schedule.map(activity => timeline.map(day => {
-    const durationLabelDay = activity.earlyStart + Math.floor((activity.duration - 1) / 2);
+    const durationLabelDay = activity.earlyStart + Math.ceil(activity.duration / 2);
     return day === durationLabelDay ? activity.duration : '';
   }));
   const ganttFontWeights = ganttValues.map(row => row.map(value => value === '' ? 'normal' : 'bold'));
