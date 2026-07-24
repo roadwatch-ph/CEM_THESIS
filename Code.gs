@@ -1643,7 +1643,9 @@ function renderPertImageArrow_(pert, sourcePosition, targetPosition, successorIn
       x: point.x - minX,
       y: point.y - minY,
     }));
-    const blob = createPertArrowRoutePngBlob_(imageWidth, imageHeight, localizedRoutePoints);
+    // Render the arrow as an SVG drawing instead of a rasterized PNG so the
+    // inserted sheet image remains a clean drawn line with a real arrowhead.
+    const blob = createPertArrowRouteSvgBlob_(imageWidth, imageHeight, localizedRoutePoints);
     const anchorCol = Math.max(1, Math.floor(minX / PERT_CELL_WIDTH_PX) + 1);
     const anchorRow = Math.max(1, Math.floor(minY / PERT_CELL_HEIGHT_PX) + 1);
     const xOffset = Math.max(0, Math.round(minX - (anchorCol - 1) * PERT_CELL_WIDTH_PX));
