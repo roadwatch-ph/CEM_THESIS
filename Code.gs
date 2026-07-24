@@ -2355,11 +2355,13 @@ function drawPertOrthogonalSmartArrow_(arrowGrid, startPoint, endPoint, successo
     return;
   }
 
+  const finalBendCol = Math.max(bendCol, endPoint.col - PERT_ARROW_END_PADDING);
+
   drawPertHorizontalConnector_(arrowGrid, startPoint.row, startPoint.col, bendCol);
   drawPertVerticalConnector_(arrowGrid, bendCol, startPoint.row, routeRow);
-  drawPertHorizontalConnector_(arrowGrid, routeRow, bendCol, endPoint.col);
-  drawPertVerticalConnector_(arrowGrid, endPoint.col, routeRow, endPoint.row);
-  setPertArrowGlyph_(arrowGrid, endPoint.row, endPoint.col, '▶');
+  drawPertHorizontalConnector_(arrowGrid, routeRow, bendCol, finalBendCol);
+  drawPertVerticalConnector_(arrowGrid, finalBendCol, routeRow, endPoint.row);
+  drawPertHorizontalArrowLine_(arrowGrid, endPoint.row, finalBendCol, endPoint.col);
 }
 
 function getPertOrthogonalBendColumn_(startPoint, endPoint, successorIndex, incomingIndex) {
