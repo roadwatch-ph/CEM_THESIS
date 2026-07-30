@@ -130,14 +130,17 @@
           const response = await fetch(GOOGLE_SHEET_API_URL);
           if (!response.ok) throw new Error('Hindi ma-load ang Google Sheet data. HTTP ' + response.status);
           rows = await response.json();
+          setStatus('Loaded from Google Sheet');
         } else {
-          rows = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null') || sampleRows;
+          rows = loadLocalRows();
+          setStatus('Loaded locally');
         }
         renderAll();
-        setStatus(GOOGLE_SHEET_API_URL ? 'Loaded from Google Sheet' : 'Loaded locally');
       } catch (error) {
-        showError(error.message);
-        setStatus('Error');
+        rows = loadLocalRows();
+        renderAll();
+        showError(buildFetchErrorMessage(error, 'ma-load'));
+        setStatus('Loaded locally after Google Sheet error');
       }
     }
 
@@ -159,15 +162,32 @@
             body: JSON.stringify({ rows })
           });
           if (!response.ok) throw new Error('Hindi ma-save sa Google Sheet. HTTP ' + response.status);
+          setStatus('Saved to Google Sheet');
         } else {
-          localStorage.setItem(STORAGE_KEY, JSON.stringify(rows));
+          saveLocalRows(rows);
+          setStatus('Saved locally');
         }
         renderAll();
-        setStatus(GOOGLE_SHEET_API_URL ? 'Saved to Google Sheet' : 'Saved locally');
       } catch (error) {
-        showError(error.message);
-        setStatus('Error');
+        saveLocalRows(rows);
+        renderAll();
+        showError(buildFetchErrorMessage(error, 'ma-save') + '\n\nNa-save muna sa local browser storage.');
+        setStatus('Saved locally after Google Sheet error');
       }
+    }
+
+    function loadLocalRows() {
+      return JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null') || sampleRows.map(row => ({ ...row }));
+    }
+
+    function saveLocalRows(nextRows) {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(nextRows));
+    }
+
+    function buildFetchErrorMessage(error, action) {
+      const details = error && error.message ? error.message : 'Failed to fetch';
+      return 'Hindi ' + action + ' ang Google Sheet endpoint. (' + details + ')\n'
+        + 'Karaniwang dahilan: hindi naka-deploy as Web App ang Apps Script, walang access permission, mali/expired ang URL, naka-block ng CORS, o offline/blocked ang network.';
     }
 
     function loadSampleData() {
