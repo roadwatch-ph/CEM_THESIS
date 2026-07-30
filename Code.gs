@@ -69,11 +69,12 @@ const PERT_MAX_IMAGE_ARROW_COUNT = 200;
 const PERT_IMAGE_ARROW_MAX_NODE_COUNT = 250;
 const PERT_USE_IMAGE_ARROWS = true;
 const PERT_USE_COMPOSITE_DRAWN_ARROW_IMAGE = true;
-const PERT_ARROW_IMAGE_STROKE_WIDTH = 1;
-const PERT_ARROW_IMAGE_HEAD_LENGTH = 8;
-const PERT_ARROW_IMAGE_HEAD_HALF_WIDTH = 4;
+const PERT_ARROW_IMAGE_STROKE_WIDTH = 3;
+const PERT_ARROW_IMAGE_HEAD_LENGTH = 14;
+const PERT_ARROW_IMAGE_HEAD_HALF_WIDTH = 7;
 const PERT_ARROW_GRID_CONNECTOR_GLYPHS = new Set(['━', '┃', '┼']);
-const PERT_USE_BORDER_ARROW_CONNECTORS = true;
+const PERT_USE_BORDER_ARROW_CONNECTORS = false;
+const PERT_USE_TEXT_GLYPH_ARROW_FALLBACK = false;
 const PERT_ARROW_MARKER_SIZE = 18;
 const PERT_WEB_ARROW_STROKE_WIDTH = 1;
 const DEFAULT_WBS_SHEET_NAME = 'WBS';
@@ -769,7 +770,7 @@ function renderPertDiagram_(pert, schedule) {
   breakApartOverlappingMergedRanges_(pertDescriptionRange);
   pertDescriptionRange
     .mergeAcross()
-    .setValue('Each node shows ES, Duration, EF on top; Activity ID in the middle; and LS, Slack, LF on the bottom. Arrows are rendered as drawn SVG arrow connectors first, with border-based arrow connectors only as a fallback for very large diagrams.')
+    .setValue('Each node shows ES, Duration, EF on top; Activity ID in the middle; and LS, Slack, LF on the bottom. Arrows are rendered only as drawn over-grid SVG/PNG arrow images so connectors appear as actual arrows instead of spreadsheet borders or text glyphs.')
     .setHorizontalAlignment('center')
     .setWrap(true)
     .setBackground('#ddebf7');
@@ -1469,7 +1470,9 @@ function renderPertArrows_(pert, schedule, layout, rowsNeeded, columnsNeeded) {
     return false;
   }
 
-  let fallbackArrowGrid = shouldUseImageArrows ? null : createPertArrowGrid_(rowsNeeded, columnsNeeded);
+  let fallbackArrowGrid = PERT_USE_TEXT_GLYPH_ARROW_FALLBACK && !shouldUseImageArrows
+    ? createPertArrowGrid_(rowsNeeded, columnsNeeded)
+    : null;
   let occupiedNodeCells = fallbackArrowGrid ? createPertOccupiedNodeCellSet_(layout.positions) : null;
 
   arrowRoutes.forEach(route => {
@@ -1487,7 +1490,7 @@ function renderPertArrows_(pert, schedule, layout, rowsNeeded, columnsNeeded) {
       route.color
     );
 
-    if (!wasRenderedAsImage) {
+    if (!wasRenderedAsImage && PERT_USE_TEXT_GLYPH_ARROW_FALLBACK) {
       if (!fallbackArrowGrid) {
         fallbackArrowGrid = createPertArrowGrid_(rowsNeeded, columnsNeeded);
         occupiedNodeCells = createPertOccupiedNodeCellSet_(layout.positions);
@@ -1581,9 +1584,8 @@ function renderPertArrowGrid_(pert, arrowGrid, rowsNeeded, columnsNeeded) {
 function createPertArrowDisplayGrid_(arrowGrid) {
   if (!PERT_USE_BORDER_ARROW_CONNECTORS) return arrowGrid;
 
-  // Hide line/intersection glyphs when fallback arrows use cell borders. Keeping
-  // those glyphs visible makes the diagram look like dashed "+" text instead
-  // of clean connector lines; only arrowhead glyphs should remain in cells.
+  // Border-based fallback connectors are disabled so arrows remain visible as
+  // actual arrow glyphs instead of looking like regular spreadsheet borders.
   return arrowGrid.map(row => row.map(glyph => {
     return PERT_ARROW_GRID_CONNECTOR_GLYPHS.has(glyph) ? '' : glyph;
   }));
@@ -2405,30 +2407,37 @@ function createPertArrowRoutesSvgBlob_(width, height, routes) {
 function createPertArrowRoutesSvg_(width, height, routes) {
   const safeWidth = Math.max(1, Math.ceil(width));
   const safeHeight = Math.max(1, Math.ceil(height));
-  const markerTipX = PERT_ARROW_IMAGE_HEAD_LENGTH;
-  const markerCenterY = PERT_ARROW_IMAGE_HEAD_HALF_WIDTH;
-  const markerHeight = PERT_ARROW_IMAGE_HEAD_HALF_WIDTH * 2;
-  const markerWidth = PERT_ARROW_IMAGE_HEAD_LENGTH;
-  const colors = Array.from(new Set(routes.map(route => route.color || PERT_ARROW_COLOR)));
-  const markerDefs = colors.map((color, index) => {
-    const markerId = `arrowhead-${index}`;
-    return `<marker id="${markerId}" markerWidth="${markerWidth}" markerHeight="${markerHeight}" refX="${markerTipX}" refY="${markerCenterY}" orient="auto" markerUnits="userSpaceOnUse"><path d="M 0 0 L ${markerTipX} ${markerCenterY} L 0 ${markerHeight} z" fill="${color}"/></marker>`;
-  });
-  const markerIdByColor = new Map(colors.map((color, index) => [color, `arrowhead-${index}`]));
   const polylines = routes.map(route => {
     const color = route.color || PERT_ARROW_COLOR;
     const pointList = route.points.map(point => `${formatPertSvgNumber_(point.x)},${formatPertSvgNumber_(point.y)}`).join(' ');
-    return `<polyline points="${pointList}" fill="none" stroke="${color}" stroke-width="${PERT_ARROW_IMAGE_STROKE_WIDTH}" marker-end="url(#${markerIdByColor.get(color)})" stroke-linecap="butt" stroke-linejoin="miter"/>`;
+    return `<polyline points="${pointList}" fill="none" stroke="${color}" stroke-width="${PERT_ARROW_IMAGE_STROKE_WIDTH}" stroke-linecap="round" stroke-linejoin="round"/>${createPertSvgArrowHead_(route.points, color)}`;
   });
 
   return [
     `<svg xmlns="http://www.w3.org/2000/svg" width="${safeWidth}" height="${safeHeight}" viewBox="0 0 ${safeWidth} ${safeHeight}">`,
-    '<defs>',
-    markerDefs.join(''),
-    '</defs>',
     polylines.join(''),
     '</svg>',
   ].join('');
+}
+
+function createPertSvgArrowHead_(points, arrowColor) {
+  if (!points || points.length < 2) return '';
+
+  const arrowStartPoint = points[Math.max(0, points.length - 2)];
+  const arrowEndPoint = points[points.length - 1];
+  const angle = Math.atan2(arrowEndPoint.y - arrowStartPoint.y, arrowEndPoint.x - arrowStartPoint.x);
+  const baseX = arrowEndPoint.x - Math.cos(angle) * PERT_ARROW_IMAGE_HEAD_LENGTH;
+  const baseY = arrowEndPoint.y - Math.sin(angle) * PERT_ARROW_IMAGE_HEAD_LENGTH;
+  const normalX = -Math.sin(angle);
+  const normalY = Math.cos(angle);
+  const arrowHeadPoints = [
+    arrowEndPoint,
+    { x: baseX + normalX * PERT_ARROW_IMAGE_HEAD_HALF_WIDTH, y: baseY + normalY * PERT_ARROW_IMAGE_HEAD_HALF_WIDTH },
+    { x: baseX - normalX * PERT_ARROW_IMAGE_HEAD_HALF_WIDTH, y: baseY - normalY * PERT_ARROW_IMAGE_HEAD_HALF_WIDTH },
+  ];
+  const pointList = arrowHeadPoints.map(point => `${formatPertSvgNumber_(point.x)},${formatPertSvgNumber_(point.y)}`).join(' ');
+
+  return `<polygon points="${pointList}" fill="${arrowColor || PERT_ARROW_COLOR}"/>`;
 }
 
 function createPertArrowRouteSvgBlob_(width, height, points, arrowColor) {
@@ -2444,18 +2453,10 @@ function createPertArrowRouteSvg_(width, height, points, arrowColor) {
   const safeHeight = Math.max(1, Math.ceil(height));
   const safeArrowColor = arrowColor || PERT_ARROW_COLOR;
   const pointList = points.map(point => `${formatPertSvgNumber_(point.x)},${formatPertSvgNumber_(point.y)}`).join(' ');
-  const markerTipX = PERT_ARROW_IMAGE_HEAD_LENGTH;
-  const markerCenterY = PERT_ARROW_IMAGE_HEAD_HALF_WIDTH;
-  const markerHeight = PERT_ARROW_IMAGE_HEAD_HALF_WIDTH * 2;
-  const markerWidth = PERT_ARROW_IMAGE_HEAD_LENGTH;
   return [
     `<svg xmlns="http://www.w3.org/2000/svg" width="${safeWidth}" height="${safeHeight}" viewBox="0 0 ${safeWidth} ${safeHeight}">`,
-    '<defs>',
-    `<marker id="arrowhead" markerWidth="${markerWidth}" markerHeight="${markerHeight}" refX="${markerTipX}" refY="${markerCenterY}" orient="auto" markerUnits="userSpaceOnUse">`,
-    `<path d="M 0 0 L ${markerTipX} ${markerCenterY} L 0 ${markerHeight} z" fill="${safeArrowColor}"/>`,
-    '</marker>',
-    '</defs>',
-    `<polyline points="${pointList}" fill="none" stroke="${safeArrowColor}" stroke-width="${PERT_ARROW_IMAGE_STROKE_WIDTH}" marker-end="url(#arrowhead)" stroke-linecap="butt" stroke-linejoin="miter"/>`,
+    `<polyline points="${pointList}" fill="none" stroke="${safeArrowColor}" stroke-width="${PERT_ARROW_IMAGE_STROKE_WIDTH}" stroke-linecap="round" stroke-linejoin="round"/>`,
+    createPertSvgArrowHead_(points, safeArrowColor),
     '</svg>',
   ].join('');
 }
