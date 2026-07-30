@@ -34,8 +34,8 @@ const PERT_MIN_TERMINAL_ROW_SPACING = 8;
 const PERT_NODE_COLUMN_SPACING = 7;
 const PERT_NODE_HEIGHT = 3;
 const PERT_NODE_WIDTH = 3;
-const PERT_ARROW_COLOR = '#2aa84a';
-const PERT_CRITICAL_ARROW_COLOR = '#ff0000';
+const PERT_ARROW_COLOR = '#000000';
+const PERT_CRITICAL_ARROW_COLOR = '#000000';
 const PERT_ARROW_FONT_SIZE = 12;
 const PERT_ARROW_START_PADDING = 2;
 const PERT_ARROW_END_PADDING = 2;
@@ -67,13 +67,13 @@ const PERT_MAX_IMAGE_ARROW_COUNT = 200;
 const PERT_IMAGE_ARROW_MAX_NODE_COUNT = 250;
 const PERT_USE_IMAGE_ARROWS = true;
 const PERT_USE_COMPOSITE_DRAWN_ARROW_IMAGE = true;
-const PERT_ARROW_IMAGE_STROKE_WIDTH = 4;
-const PERT_ARROW_IMAGE_HEAD_LENGTH = 16;
-const PERT_ARROW_IMAGE_HEAD_HALF_WIDTH = 9;
+const PERT_ARROW_IMAGE_STROKE_WIDTH = 1;
+const PERT_ARROW_IMAGE_HEAD_LENGTH = 8;
+const PERT_ARROW_IMAGE_HEAD_HALF_WIDTH = 4;
 const PERT_ARROW_GRID_CONNECTOR_GLYPHS = new Set(['━', '┃', '┼']);
 const PERT_USE_BORDER_ARROW_CONNECTORS = false;
 const PERT_ARROW_MARKER_SIZE = 18;
-const PERT_WEB_ARROW_STROKE_WIDTH = 4;
+const PERT_WEB_ARROW_STROKE_WIDTH = 1;
 const DEFAULT_WBS_SHEET_NAME = 'WBS';
 const DEFAULT_SCHED_SHEET_NAME = 'Scheduling';
 const DEFAULT_PERT_SHEET_NAME = 'PERT Diagram';
@@ -2376,7 +2376,7 @@ function createPertArrowRoutesSvg_(width, height, routes) {
   const polylines = routes.map(route => {
     const color = route.color || PERT_ARROW_COLOR;
     const pointList = route.points.map(point => `${formatPertSvgNumber_(point.x)},${formatPertSvgNumber_(point.y)}`).join(' ');
-    return `<polyline points="${pointList}" fill="none" stroke="${color}" stroke-width="${PERT_ARROW_IMAGE_STROKE_WIDTH}" marker-end="url(#${markerIdByColor.get(color)})" stroke-linecap="round" stroke-linejoin="round"/>`;
+    return `<polyline points="${pointList}" fill="none" stroke="${color}" stroke-width="${PERT_ARROW_IMAGE_STROKE_WIDTH}" marker-end="url(#${markerIdByColor.get(color)})" stroke-linecap="butt" stroke-linejoin="miter"/>`;
   });
 
   return [
@@ -2413,7 +2413,7 @@ function createPertArrowRouteSvg_(width, height, points, arrowColor) {
     `<path d="M 0 0 L ${markerTipX} ${markerCenterY} L 0 ${markerHeight} z" fill="${safeArrowColor}"/>`,
     '</marker>',
     '</defs>',
-    `<polyline points="${pointList}" fill="none" stroke="${safeArrowColor}" stroke-width="${PERT_ARROW_IMAGE_STROKE_WIDTH}" marker-end="url(#arrowhead)" stroke-linecap="round" stroke-linejoin="round"/>`,
+    `<polyline points="${pointList}" fill="none" stroke="${safeArrowColor}" stroke-width="${PERT_ARROW_IMAGE_STROKE_WIDTH}" marker-end="url(#arrowhead)" stroke-linecap="butt" stroke-linejoin="miter"/>`,
     '</svg>',
   ].join('');
 }
@@ -3386,8 +3386,8 @@ function renderDiagram(sheet) {
     const arrowColor = link.color || '${PERT_ARROW_COLOR}';
     path.setAttribute('stroke', arrowColor);
     path.setAttribute('stroke-width', '${PERT_WEB_ARROW_STROKE_WIDTH}');
-    path.setAttribute('stroke-linecap', 'round');
-    path.setAttribute('stroke-linejoin', 'round');
+    path.setAttribute('stroke-linecap', 'butt');
+    path.setAttribute('stroke-linejoin', 'miter');
     path.setAttribute('marker-end', arrowColor === '${PERT_CRITICAL_ARROW_COLOR}' ? 'url(#arrow-critical)' : 'url(#arrow-normal)');
     svg.appendChild(path);
   });
