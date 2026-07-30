@@ -66,6 +66,7 @@ const PERT_MAX_DIRECT_ARROW_RENDER_CELLS = 200000;
 const PERT_MAX_IMAGE_ARROW_COUNT = 200;
 const PERT_IMAGE_ARROW_MAX_NODE_COUNT = 250;
 const PERT_USE_IMAGE_ARROWS = true;
+const PERT_USE_COMPOSITE_DRAWN_ARROW_IMAGE = true;
 const PERT_ARROW_IMAGE_STROKE_WIDTH = 4;
 const PERT_ARROW_IMAGE_HEAD_LENGTH = 16;
 const PERT_ARROW_IMAGE_HEAD_HALF_WIDTH = 9;
@@ -766,7 +767,7 @@ function renderPertDiagram_(pert, schedule) {
   breakApartOverlappingMergedRanges_(pertDescriptionRange);
   pertDescriptionRange
     .mergeAcross()
-    .setValue('Each node shows ES, Duration, EF on top; Activity ID in the middle; and LS, Slack, LF on the bottom. Arrows are rendered as continuous straight/diagonal connectors, with shared stems when dependencies fan out.')
+    .setValue('Each node shows ES, Duration, EF on top; Activity ID in the middle; and LS, Slack, LF on the bottom. Arrows are rendered as drawn SVG arrow connectors first, with grid/border connectors only as a fallback for very large diagrams.')
     .setHorizontalAlignment('center')
     .setWrap(true)
     .setBackground('#ddebf7');
@@ -1426,6 +1427,10 @@ function renderPertArrows_(pert, schedule, layout, rowsNeeded, columnsNeeded) {
   if (arrowRoutes.length === 0) return false;
 
   const shouldUseImageArrows = shouldRenderPertImageArrows_(schedule, arrowRoutes);
+  if (shouldUseImageArrows && renderPertCompositeArrowImage_(pert, arrowRoutes, layout.positions)) {
+    return false;
+  }
+
   let fallbackArrowGrid = shouldUseImageArrows ? null : createPertArrowGrid_(rowsNeeded, columnsNeeded);
   let occupiedNodeCells = fallbackArrowGrid ? createPertOccupiedNodeCellSet_(layout.positions) : null;
 
@@ -1629,6 +1634,79 @@ function renderPertArrowGridInChunks_(pert, arrowGrid, rowsNeeded, columnsNeeded
       .setFontSize(PERT_ARROW_FONT_SIZE)
       .setFontWeight('normal');
   }
+}
+
+
+function renderPertCompositeArrowImage_(pert, arrowRoutes, positions) {
+  if (!PERT_USE_COMPOSITE_DRAWN_ARROW_IMAGE || arrowRoutes.length === 0) return false;
+
+  const drawnRoutes = arrowRoutes
+    .map(route => getPertDrawnArrowRoute_(route, positions))
+    .filter(route => route && route.points.length >= 2);
+  if (drawnRoutes.length === 0) return false;
+
+  const routeBounds = drawnRoutes.reduce((bounds, route) => ({
+    minX: Math.min(bounds.minX, route.bounds.minX),
+    minY: Math.min(bounds.minY, route.bounds.minY),
+    maxX: Math.max(bounds.maxX, route.bounds.maxX),
+    maxY: Math.max(bounds.maxY, route.bounds.maxY),
+  }), {
+    minX: drawnRoutes[0].bounds.minX,
+    minY: drawnRoutes[0].bounds.minY,
+    maxX: drawnRoutes[0].bounds.maxX,
+    maxY: drawnRoutes[0].bounds.maxY,
+  });
+  const minX = routeBounds.minX - PERT_ARROW_IMAGE_PADDING_PX;
+  const minY = routeBounds.minY - PERT_ARROW_IMAGE_PADDING_PX;
+  const maxX = routeBounds.maxX + PERT_ARROW_IMAGE_PADDING_PX;
+  const maxY = routeBounds.maxY + PERT_ARROW_IMAGE_PADDING_PX;
+  const imageWidth = Math.max(1, Math.ceil(maxX - minX));
+  const imageHeight = Math.max(1, Math.ceil(maxY - minY));
+  if (!canRenderPertArrowImage_(imageWidth, imageHeight)) return false;
+
+  const localizedRoutes = drawnRoutes.map(route => ({
+    color: route.color,
+    points: route.points.map(point => ({
+      x: point.x - minX,
+      y: point.y - minY,
+    })),
+  }));
+  const anchorCol = Math.max(1, Math.floor(minX / PERT_CELL_WIDTH_PX) + 1);
+  const anchorRow = Math.max(1, Math.floor(minY / PERT_CELL_HEIGHT_PX) + 1);
+  const xOffset = Math.max(0, Math.round(minX - (anchorCol - 1) * PERT_CELL_WIDTH_PX));
+  const yOffset = Math.max(0, Math.round(minY - (anchorRow - 1) * PERT_CELL_HEIGHT_PX));
+
+  try {
+    pert.insertImage(createPertArrowRoutesSvgBlob_(imageWidth, imageHeight, localizedRoutes), anchorCol, anchorRow, xOffset, yOffset)
+      .setAltTextTitle(PERT_ARROW_IMAGE_ALT_TEXT)
+      .setWidth(imageWidth)
+      .setHeight(imageHeight);
+    return true;
+  } catch (error) {
+    return false;
+  }
+}
+
+function getPertDrawnArrowRoute_(route, positions) {
+  const connectionPoints = getPertArrowPixelConnectionPoints_(
+    route.sourcePosition,
+    route.targetPosition,
+    route.successorIndex,
+    route.successorCount,
+    route.incomingIndex,
+    route.incomingCount
+  );
+  const startPoint = connectionPoints.start;
+  const endPoint = connectionPoints.end;
+  applyPertArrowEndpointGaps_(startPoint, endPoint, PERT_ARROW_IMAGE_NODE_GAP_PX, PERT_ARROW_IMAGE_TARGET_GAP_PX);
+  if (Math.round(startPoint.x) === Math.round(endPoint.x) && Math.round(startPoint.y) === Math.round(endPoint.y)) return null;
+
+  const points = getPertPreferredPixelRoutePoints_(startPoint, endPoint, route.successorIndex, route.incomingIndex, positions, route.sourceId, route.targetId);
+  return {
+    color: route.color,
+    points,
+    bounds: getPertPixelRouteBounds_(points),
+  };
 }
 
 function renderPertImageArrow_(pert, sourcePosition, targetPosition, successorIndex, successorCount, incomingIndex, incomingCount, positions, sourceId, targetId, arrowColor) {
@@ -2272,6 +2350,44 @@ function applyPertArrowEndpointGaps_(startPoint, endPoint, startGap, endGap) {
   startPoint.y += unitY * Math.max(0, startGap || 0);
   endPoint.x -= unitX * Math.max(0, endGap || 0);
   endPoint.y -= unitY * Math.max(0, endGap || 0);
+}
+
+
+function createPertArrowRoutesSvgBlob_(width, height, routes) {
+  return Utilities.newBlob(
+    createPertArrowRoutesSvg_(width, height, routes),
+    'image/svg+xml',
+    PERT_ARROW_SVG_IMAGE_FILE_NAME
+  );
+}
+
+function createPertArrowRoutesSvg_(width, height, routes) {
+  const safeWidth = Math.max(1, Math.ceil(width));
+  const safeHeight = Math.max(1, Math.ceil(height));
+  const markerTipX = PERT_ARROW_IMAGE_HEAD_LENGTH;
+  const markerCenterY = PERT_ARROW_IMAGE_HEAD_HALF_WIDTH;
+  const markerHeight = PERT_ARROW_IMAGE_HEAD_HALF_WIDTH * 2;
+  const markerWidth = PERT_ARROW_IMAGE_HEAD_LENGTH;
+  const colors = Array.from(new Set(routes.map(route => route.color || PERT_ARROW_COLOR)));
+  const markerDefs = colors.map((color, index) => {
+    const markerId = `arrowhead-${index}`;
+    return `<marker id="${markerId}" markerWidth="${markerWidth}" markerHeight="${markerHeight}" refX="${markerTipX}" refY="${markerCenterY}" orient="auto" markerUnits="userSpaceOnUse"><path d="M 0 0 L ${markerTipX} ${markerCenterY} L 0 ${markerHeight} z" fill="${color}"/></marker>`;
+  });
+  const markerIdByColor = new Map(colors.map((color, index) => [color, `arrowhead-${index}`]));
+  const polylines = routes.map(route => {
+    const color = route.color || PERT_ARROW_COLOR;
+    const pointList = route.points.map(point => `${formatPertSvgNumber_(point.x)},${formatPertSvgNumber_(point.y)}`).join(' ');
+    return `<polyline points="${pointList}" fill="none" stroke="${color}" stroke-width="${PERT_ARROW_IMAGE_STROKE_WIDTH}" marker-end="url(#${markerIdByColor.get(color)})" stroke-linecap="round" stroke-linejoin="round"/>`;
+  });
+
+  return [
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${safeWidth}" height="${safeHeight}" viewBox="0 0 ${safeWidth} ${safeHeight}">`,
+    '<defs>',
+    markerDefs.join(''),
+    '</defs>',
+    polylines.join(''),
+    '</svg>',
+  ].join('');
 }
 
 function createPertArrowRouteSvgBlob_(width, height, points, arrowColor) {
