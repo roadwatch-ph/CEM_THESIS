@@ -1,0 +1,478 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>WBS Scheduling and PERT Dashboard</title>
+  <style>
+    :root {
+      --blue: #1f4e79;
+      --green: #4caf50;
+      --red: #c00000;
+      --orange: #fce4d6;
+      --line: #d9e2ec;
+      --bg: #f4f7fb;
+      --text: #1f2933;
+    }
+
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: Arial, sans-serif; background: var(--bg); color: var(--text); }
+    header { background: var(--blue); color: #fff; padding: 22px 28px; }
+    header h1 { margin: 0 0 6px; font-size: 28px; }
+    header p { margin: 0; opacity: .9; }
+    main { padding: 20px 28px 36px; }
+    .card { background: #fff; border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 2px 8px rgba(16, 42, 67, .08); padding: 16px; overflow: auto; }
+    .toolbar, .tabs { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 14px; }
+    button, input { border: 1px solid #b8c7d9; border-radius: 7px; padding: 9px 12px; background: #fff; font-size: 14px; }
+    button { cursor: pointer; color: var(--blue); font-weight: 700; }
+    button.primary, .tab.active { background: var(--blue); border-color: var(--blue); color: #fff; }
+    button.danger { color: #9b2c2c; }
+    #status { color: #52606d; }
+    .notice { margin-bottom: 14px; background: #eaf2f8; border: 1px solid #b8c7d9; border-radius: 10px; padding: 12px; }
+    .error { margin-bottom: 14px; background: #fff5f5; border: 1px solid #feb2b2; color: #9b2c2c; border-radius: 10px; padding: 12px; white-space: pre-line; }
+    .panel { display: none; }
+    .panel.active { display: block; }
+    table { border-collapse: collapse; min-width: 920px; width: 100%; }
+    th, td { border: 1px solid var(--line); padding: 8px; text-align: left; vertical-align: middle; }
+    th { background: #ddebf7; text-align: center; }
+    td.center { text-align: center; }
+    .wbs-input { width: 100%; border: 0; padding: 7px; background: transparent; }
+    .critical-row { background: var(--orange); }
+    .gantt-cell { min-width: 26px; height: 28px; text-align: center; }
+    .bar { background: var(--green); color: #fff; font-weight: 700; }
+    svg { display: block; min-width: 900px; min-height: 520px; background: #fff; }
+    .node rect { stroke-width: 2; }
+    .node text { text-anchor: middle; dominant-baseline: middle; font-size: 13px; }
+    .node .activity { font-weight: 700; font-size: 15px; }
+    .legend { margin-top: 12px; color: #52606d; font-size: 13px; }
+    code { background: #eef2f7; padding: 2px 5px; border-radius: 4px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>WBS, Scheduling, and PERT Dashboard</h1>
+    <p>Standalone HTML website. Connect the optional API URL to your Google Sheet endpoint when ready.</p>
+  </header>
+
+  <main>
+    <div class="notice">
+      <strong>Google Sheet connection:</strong> palitan ang <code>GOOGLE_SHEET_API_URL</code> sa script section ng URL ng Apps Script/Web App endpoint mo. Kapag may URL na, automatic itong maglo-load at magse-save sa endpoint; habang blank pa, local browser storage muna ang gamit.
+    </div>
+
+    <div id="message"></div>
+
+    <div class="toolbar">
+      <button class="primary" type="button" onclick="saveData()">Save</button>
+      <button type="button" onclick="loadData()">Refresh</button>
+      <button type="button" onclick="addWbsRow()">+ Add Activity</button>
+      <button type="button" onclick="loadSampleData()">Load Sample</button>
+      <span id="status">Ready</span>
+    </div>
+
+    <div class="tabs">
+      <button class="tab active" type="button" onclick="showTab('wbs')">WBS</button>
+      <button class="tab" type="button" onclick="showTab('schedule')">Scheduling</button>
+      <button class="tab" type="button" onclick="showTab('pert')">PERT Diagram</button>
+    </div>
+
+    <section id="wbs" class="panel active">
+      <div class="card">
+        <table>
+          <thead>
+            <tr>
+              <th>Activity ID</th>
+              <th>Activity Description</th>
+              <th>Predecessor</th>
+              <th>Duration</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody id="wbsBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="schedule" class="panel">
+      <div class="card" id="scheduleWrap"></div>
+    </section>
+
+    <section id="pert" class="panel">
+      <div class="card"><svg id="pertSvg" role="img" aria-label="PERT diagram"></svg></div>
+      <div class="legend">Node format: ES | Duration | EF, Activity ID, LS | Slack | LF. Orange nodes are critical path activities.</div>
+    </section>
+  </main>
+
+  <script>
+    // Paste your Apps Script/Web App endpoint here when you are ready to connect Google Sheets.
+    // Expected GET response: [{ id, name, predecessors, duration }, ...]
+    // Expected POST body: { rows: [{ id, name, predecessors, duration }, ...] }
+    const GOOGLE_SHEET_API_URL = '';
+    const STORAGE_KEY = 'wbs-scheduling-pert-dashboard';
+
+    const sampleRows = [
+      { id: 'A', name: 'Site clearing', predecessors: '-', duration: 2 },
+      { id: 'B', name: 'Excavation', predecessors: 'A', duration: 4 },
+      { id: 'C', name: 'Foundation works', predecessors: 'B', duration: 5 },
+      { id: 'D', name: 'Structural framing', predecessors: 'C', duration: 7 },
+      { id: 'E', name: 'Electrical rough-in', predecessors: 'D', duration: 3 },
+      { id: 'F', name: 'Plumbing rough-in', predecessors: 'D', duration: 3 },
+      { id: 'G', name: 'Finishing works', predecessors: 'E,F', duration: 5 }
+    ];
+
+    let rows = [];
+    let schedule = [];
+
+    async function loadData() {
+      setStatus('Loading...');
+      clearMessage();
+      try {
+        if (GOOGLE_SHEET_API_URL) {
+          const response = await fetch(GOOGLE_SHEET_API_URL);
+          if (!response.ok) throw new Error('Hindi ma-load ang Google Sheet data. HTTP ' + response.status);
+          rows = await response.json();
+        } else {
+          rows = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null') || sampleRows;
+        }
+        renderAll();
+        setStatus(GOOGLE_SHEET_API_URL ? 'Loaded from Google Sheet' : 'Loaded locally');
+      } catch (error) {
+        showError(error.message);
+        setStatus('Error');
+      }
+    }
+
+    async function saveData() {
+      rows = readWbsRowsFromTable();
+      const validation = validateAndBuildSchedule(rows);
+      if (validation.error) {
+        showError(validation.error);
+        return;
+      }
+
+      setStatus('Saving...');
+      clearMessage();
+      try {
+        if (GOOGLE_SHEET_API_URL) {
+          const response = await fetch(GOOGLE_SHEET_API_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ rows })
+          });
+          if (!response.ok) throw new Error('Hindi ma-save sa Google Sheet. HTTP ' + response.status);
+        } else {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(rows));
+        }
+        renderAll();
+        setStatus(GOOGLE_SHEET_API_URL ? 'Saved to Google Sheet' : 'Saved locally');
+      } catch (error) {
+        showError(error.message);
+        setStatus('Error');
+      }
+    }
+
+    function loadSampleData() {
+      rows = sampleRows.map(row => ({ ...row }));
+      renderAll();
+      setStatus('Sample loaded');
+    }
+
+    function renderAll() {
+      renderWbsTable();
+      const result = validateAndBuildSchedule(rows);
+      if (result.error) {
+        schedule = [];
+        showError(result.error);
+      } else {
+        schedule = result.schedule;
+        clearMessage();
+      }
+      renderSchedule();
+      renderPert();
+    }
+
+    function renderWbsTable() {
+      const body = document.getElementById('wbsBody');
+      body.innerHTML = '';
+      rows.forEach(row => addWbsRow(row));
+    }
+
+    function addWbsRow(row = { id: '', name: '', predecessors: '-', duration: '' }) {
+      const tr = document.createElement('tr');
+      ['id', 'name', 'predecessors', 'duration'].forEach(field => {
+        const td = document.createElement('td');
+        const input = document.createElement('input');
+        input.className = 'wbs-input';
+        input.dataset.field = field;
+        input.value = row[field] ?? '';
+        input.addEventListener('input', () => {
+          rows = readWbsRowsFromTable();
+          renderComputedViewsOnly();
+        });
+        td.appendChild(input);
+        tr.appendChild(td);
+      });
+      const action = document.createElement('td');
+      action.className = 'center';
+      action.innerHTML = '<button class="danger" type="button" onclick="deleteRow(this)">Delete</button>';
+      tr.appendChild(action);
+      document.getElementById('wbsBody').appendChild(tr);
+    }
+
+    function deleteRow(button) {
+      button.closest('tr').remove();
+      rows = readWbsRowsFromTable();
+      renderComputedViewsOnly();
+    }
+
+    function renderComputedViewsOnly() {
+      const result = validateAndBuildSchedule(rows);
+      if (result.error) {
+        schedule = [];
+        showError(result.error);
+      } else {
+        schedule = result.schedule;
+        clearMessage();
+      }
+      renderSchedule();
+      renderPert();
+    }
+
+    function readWbsRowsFromTable() {
+      return [...document.querySelectorAll('#wbsBody tr')]
+        .map(tr => ({
+          id: tr.querySelector('[data-field="id"]').value.trim(),
+          name: tr.querySelector('[data-field="name"]').value.trim(),
+          predecessors: tr.querySelector('[data-field="predecessors"]').value.trim() || '-',
+          duration: Number(tr.querySelector('[data-field="duration"]').value)
+        }))
+        .filter(row => row.id || row.name || row.predecessors !== '-' || row.duration);
+    }
+
+    function validateAndBuildSchedule(sourceRows) {
+      const errors = [];
+      const ids = new Set();
+      const activities = sourceRows.map((row, index) => {
+        const id = String(row.id || '').trim();
+        const name = String(row.name || '').trim();
+        const duration = Number(row.duration);
+        const predecessors = parsePredecessors(row.predecessors);
+
+        if (!id) errors.push('Row ' + (index + 1) + ': missing Activity ID.');
+        if (id && ids.has(id.toUpperCase())) errors.push('Row ' + (index + 1) + ': duplicate Activity ID "' + id + '".');
+        if (!name) errors.push('Row ' + (index + 1) + ': missing Activity Description.');
+        if (!Number.isFinite(duration) || duration <= 0) errors.push('Row ' + (index + 1) + ': Duration must be a positive number.');
+        if (id) ids.add(id.toUpperCase());
+        return { id, name, predecessors, duration, sourceRow: index + 1 };
+      });
+
+      activities.forEach(activity => {
+        activity.predecessors.forEach(predecessor => {
+          if (!ids.has(predecessor.toUpperCase())) errors.push('Activity ' + activity.id + ': invalid predecessor "' + predecessor + '".');
+          if (predecessor.toUpperCase() === activity.id.toUpperCase()) errors.push('Activity ' + activity.id + ': activity cannot be its own predecessor.');
+        });
+      });
+
+      if (errors.length) return { error: errors.join('\n'), schedule: [] };
+
+      try {
+        const ordered = topologicalSort(activities);
+        return { error: '', schedule: computeSchedule(ordered) };
+      } catch (error) {
+        return { error: error.message, schedule: [] };
+      }
+    }
+
+    function parsePredecessors(value) {
+      const text = String(value || '').trim();
+      if (!text || text === '-') return [];
+      return text.split(',').map(item => item.trim()).filter(Boolean);
+    }
+
+    function topologicalSort(activities) {
+      const byId = new Map(activities.map(activity => [activity.id, activity]));
+      const inDegree = new Map(activities.map(activity => [activity.id, activity.predecessors.length]));
+      const successors = new Map(activities.map(activity => [activity.id, []]));
+      const queue = [];
+      const ordered = [];
+
+      activities.forEach(activity => {
+        activity.predecessors.forEach(predecessor => successors.get(predecessor).push(activity.id));
+        if (!activity.predecessors.length) queue.push(activity);
+      });
+
+      while (queue.length) {
+        const activity = queue.shift();
+        ordered.push(activity);
+        successors.get(activity.id).forEach(successorId => {
+          inDegree.set(successorId, inDegree.get(successorId) - 1);
+          if (inDegree.get(successorId) === 0) queue.push(byId.get(successorId));
+        });
+      }
+
+      if (ordered.length !== activities.length) throw new Error('Circular dependency detected. Please check predecessor values.');
+      return ordered;
+    }
+
+    function computeSchedule(ordered) {
+      const byId = new Map();
+      const successors = new Map(ordered.map(activity => [activity.id, []]));
+      ordered.forEach(activity => activity.predecessors.forEach(predecessor => successors.get(predecessor).push(activity.id)));
+
+      ordered.forEach(activity => {
+        const earlyStart = activity.predecessors.reduce((max, predecessor) => Math.max(max, byId.get(predecessor).earlyFinish), 0);
+        const earlyFinish = earlyStart + activity.duration;
+        byId.set(activity.id, { ...activity, earlyStart, earlyFinish, lateStart: 0, lateFinish: 0, slack: 0, successors: successors.get(activity.id), isCritical: false });
+      });
+
+      const projectFinish = Math.max(...[...byId.values()].map(activity => activity.earlyFinish));
+      [...ordered].reverse().forEach(activity => {
+        const item = byId.get(activity.id);
+        item.lateFinish = item.successors.length ? Math.min(...item.successors.map(successor => byId.get(successor).lateStart)) : projectFinish;
+        item.lateStart = item.lateFinish - item.duration;
+        item.slack = item.lateStart - item.earlyStart;
+        item.isCritical = item.slack === 0;
+      });
+
+      return [...byId.values()].sort((a, b) => a.sourceRow - b.sourceRow);
+    }
+
+    function renderSchedule() {
+      const wrap = document.getElementById('scheduleWrap');
+      if (!schedule.length) {
+        wrap.innerHTML = 'No valid schedule yet.';
+        return;
+      }
+
+      const maxFinish = Math.max(...schedule.map(activity => activity.lateFinish));
+      let html = '<table><thead><tr><th>ID</th><th>Description</th><th>Pred</th><th>Dur</th><th>ES</th><th>EF</th><th>LS</th><th>LF</th>';
+      for (let day = 1; day <= maxFinish; day++) html += '<th>' + day + '</th>';
+      html += '</tr></thead><tbody>';
+
+      schedule.forEach(activity => {
+        html += '<tr class="' + (activity.isCritical ? 'critical-row' : '') + '"><td>' + escapeHtml(activity.id) + '</td><td>' + escapeHtml(activity.name) + '</td><td>' + escapeHtml(activity.predecessors.length ? activity.predecessors.join(',') : '-') + '</td><td class="center">' + activity.duration + '</td><td class="center">' + activity.earlyStart + '</td><td class="center">' + activity.earlyFinish + '</td><td class="center">' + activity.lateStart + '</td><td class="center">' + activity.lateFinish + '</td>';
+        for (let day = 1; day <= maxFinish; day++) {
+          const active = day > activity.earlyStart && day <= activity.earlyFinish;
+          const labelDay = activity.earlyStart + Math.ceil(activity.duration / 2);
+          html += '<td class="gantt-cell ' + (active ? 'bar' : '') + '">' + (day === labelDay ? activity.duration : '') + '</td>';
+        }
+        html += '</tr>';
+      });
+
+      wrap.innerHTML = html + '</tbody></table>';
+    }
+
+    function renderPert() {
+      const svg = document.getElementById('pertSvg');
+      svg.innerHTML = '';
+      if (!schedule.length) return;
+
+      const levels = buildLevels(schedule);
+      const levelWidth = 300;
+      const rowHeight = 150;
+      const nodeWidth = 210;
+      const nodeHeight = 84;
+      const maxRows = Math.max(...[...levels.values()].map(items => items.length));
+      const width = Math.max(900, (levels.size + 1) * levelWidth);
+      const height = Math.max(520, maxRows * rowHeight + 120);
+      svg.setAttribute('viewBox', '0 0 ' + width + ' ' + height);
+      svg.setAttribute('width', width);
+      svg.setAttribute('height', height);
+      svg.innerHTML = '<defs><marker id="arrow" markerWidth="16" markerHeight="18" refX="16" refY="9" orient="auto"><path d="M0,0 L16,9 L0,18 z" fill="#4caf50"/></marker><marker id="criticalArrow" markerWidth="16" markerHeight="18" refX="16" refY="9" orient="auto"><path d="M0,0 L16,9 L0,18 z" fill="#c00000"/></marker></defs>';
+
+      const positions = new Map();
+      [...levels.entries()].forEach(([level, activities]) => {
+        activities.forEach((activity, index) => {
+          const x = 40 + level * levelWidth;
+          const y = 50 + index * rowHeight;
+          positions.set(activity.id, { x, y, width: nodeWidth, height: nodeHeight });
+        });
+      });
+
+      schedule.forEach(activity => {
+        activity.successors.forEach(successorId => drawArrow(svg, positions.get(activity.id), positions.get(successorId), activity.isCritical && schedule.find(item => item.id === successorId)?.isCritical));
+      });
+      schedule.forEach(activity => drawNode(svg, activity, positions.get(activity.id)));
+    }
+
+    function buildLevels(items) {
+      const byId = new Map(items.map(item => [item.id, item]));
+      const levelById = new Map();
+      function levelOf(activity) {
+        if (levelById.has(activity.id)) return levelById.get(activity.id);
+        const level = activity.predecessors.length ? Math.max(...activity.predecessors.map(predecessor => levelOf(byId.get(predecessor)))) + 1 : 0;
+        levelById.set(activity.id, level);
+        return level;
+      }
+      items.forEach(levelOf);
+      const levels = new Map();
+      items.forEach(item => {
+        const level = levelById.get(item.id);
+        if (!levels.has(level)) levels.set(level, []);
+        levels.get(level).push(item);
+      });
+      return levels;
+    }
+
+    function drawArrow(svg, from, to, critical) {
+      if (!from || !to) return;
+      const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      const startX = from.x + from.width;
+      const startY = from.y + from.height / 2;
+      const endX = to.x;
+      const endY = to.y + to.height / 2;
+      const midX = (startX + endX) / 2;
+      path.setAttribute('d', 'M ' + startX + ' ' + startY + ' C ' + midX + ' ' + startY + ', ' + midX + ' ' + endY + ', ' + endX + ' ' + endY);
+      path.setAttribute('fill', 'none');
+      path.setAttribute('stroke', critical ? '#c00000' : '#4caf50');
+      path.setAttribute('stroke-width', '4');
+      path.setAttribute('marker-end', critical ? 'url(#criticalArrow)' : 'url(#arrow)');
+      svg.appendChild(path);
+    }
+
+    function drawNode(svg, activity, box) {
+      const group = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+      group.setAttribute('class', 'node');
+      const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+      rect.setAttribute('x', box.x);
+      rect.setAttribute('y', box.y);
+      rect.setAttribute('width', box.width);
+      rect.setAttribute('height', box.height);
+      rect.setAttribute('rx', '8');
+      rect.setAttribute('fill', activity.isCritical ? '#fce4d6' : '#ffffff');
+      rect.setAttribute('stroke', activity.isCritical ? '#c00000' : '#111827');
+      group.appendChild(rect);
+      addSvgText(group, box.x + box.width / 6, box.y + box.height / 6, activity.earlyStart);
+      addSvgText(group, box.x + box.width / 2, box.y + box.height / 6, activity.duration);
+      addSvgText(group, box.x + box.width * 5 / 6, box.y + box.height / 6, activity.earlyFinish);
+      addSvgText(group, box.x + box.width / 2, box.y + box.height / 2, activity.id, 'activity');
+      addSvgText(group, box.x + box.width / 6, box.y + box.height * 5 / 6, activity.lateStart);
+      addSvgText(group, box.x + box.width / 2, box.y + box.height * 5 / 6, activity.slack);
+      addSvgText(group, box.x + box.width * 5 / 6, box.y + box.height * 5 / 6, activity.lateFinish);
+      svg.appendChild(group);
+    }
+
+    function addSvgText(group, x, y, value, className) {
+      const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      text.setAttribute('x', x);
+      text.setAttribute('y', y);
+      if (className) text.setAttribute('class', className);
+      text.textContent = value;
+      group.appendChild(text);
+    }
+
+    function showTab(id) {
+      document.querySelectorAll('.panel').forEach(panel => panel.classList.remove('active'));
+      document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
+      document.getElementById(id).classList.add('active');
+      [...document.querySelectorAll('.tab')].find(tab => tab.textContent.toLowerCase().startsWith(id === 'schedule' ? 'scheduling' : id)).classList.add('active');
+    }
+
+    function setStatus(text) { document.getElementById('status').textContent = text; }
+    function clearMessage() { document.getElementById('message').innerHTML = ''; }
+    function showError(text) { document.getElementById('message').innerHTML = '<div class="error">' + escapeHtml(text) + '</div>'; }
+    function escapeHtml(value) { return String(value).replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char])); }
+
+    loadData();
+  </script>
+</body>
+</html>
