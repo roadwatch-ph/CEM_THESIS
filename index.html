@@ -56,7 +56,7 @@
 
   <main>
     <div class="notice">
-      <strong>Google Sheet connection:</strong> nakakonekta na ang dashboard sa configured Apps Script/Web App endpoint. Gagamit ito ng local browser storage kung hindi maabot ang endpoint.
+      <strong>Google Sheet connection:</strong> nakakonekta ang dashboard sa configured Apps Script/Web App endpoint. Ang data ay manggagaling at mase-save lamang sa Google Sheet endpoint.
     </div>
 
     <div id="message"></div>
@@ -107,8 +107,6 @@
     // Expected GET response: [{ id, name, predecessors, duration }, ...]
     // Expected POST body: { rows: [{ id, name, predecessors, duration }, ...] }
     const GOOGLE_SHEET_API_URL = 'https://script.google.com/macros/s/AKfycbzDTV0Ct2J-Z3HP5shondEei-7YwK3YRv383Z-BDH4StpKawrGtsvNZixqMRGKCv84RRA/exec';
-    const STORAGE_KEY = 'wbs-scheduling-pert-dashboard';
-
     const sampleRows = [
       { id: 'A', name: 'Site clearing', predecessors: '-', duration: 2 },
       { id: 'B', name: 'Excavation', predecessors: 'A', duration: 4 },
@@ -126,21 +124,16 @@
       setStatus('Loading...');
       clearMessage();
       try {
-        if (GOOGLE_SHEET_API_URL) {
-          const response = await fetch(GOOGLE_SHEET_API_URL);
-          if (!response.ok) throw new Error('Hindi ma-load ang Google Sheet data. HTTP ' + response.status);
-          rows = await response.json();
-          setStatus('Loaded from Google Sheet');
-        } else {
-          rows = loadLocalRows();
-          setStatus('Loaded locally');
-        }
+        if (!GOOGLE_SHEET_API_URL) throw new Error('Walang configured Google Sheet endpoint.');
+
+        const response = await fetch(GOOGLE_SHEET_API_URL);
+        if (!response.ok) throw new Error('Hindi ma-load ang Google Sheet data. HTTP ' + response.status);
+        rows = await response.json();
         renderAll();
+        setStatus('Loaded from Google Sheet');
       } catch (error) {
-        rows = loadLocalRows();
-        renderAll();
         showError(buildFetchErrorMessage(error, 'ma-load'));
-        setStatus('Loaded locally after Google Sheet error');
+        setStatus('Google Sheet load error');
       }
     }
 
@@ -155,33 +148,20 @@
       setStatus('Saving...');
       clearMessage();
       try {
-        if (GOOGLE_SHEET_API_URL) {
-          const response = await fetch(GOOGLE_SHEET_API_URL, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ rows })
-          });
-          if (!response.ok) throw new Error('Hindi ma-save sa Google Sheet. HTTP ' + response.status);
-          setStatus('Saved to Google Sheet');
-        } else {
-          saveLocalRows(rows);
-          setStatus('Saved locally');
-        }
+        if (!GOOGLE_SHEET_API_URL) throw new Error('Walang configured Google Sheet endpoint.');
+
+        const response = await fetch(GOOGLE_SHEET_API_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: JSON.stringify({ rows })
+        });
+        if (!response.ok) throw new Error('Hindi ma-save sa Google Sheet. HTTP ' + response.status);
         renderAll();
+        setStatus('Saved to Google Sheet');
       } catch (error) {
-        saveLocalRows(rows);
-        renderAll();
-        showError(buildFetchErrorMessage(error, 'ma-save') + '\n\nNa-save muna sa local browser storage.');
-        setStatus('Saved locally after Google Sheet error');
+        showError(buildFetchErrorMessage(error, 'ma-save'));
+        setStatus('Google Sheet save error');
       }
-    }
-
-    function loadLocalRows() {
-      return JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null') || sampleRows.map(row => ({ ...row }));
-    }
-
-    function saveLocalRows(nextRows) {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(nextRows));
     }
 
     function buildFetchErrorMessage(error, action) {
