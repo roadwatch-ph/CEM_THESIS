@@ -26,12 +26,12 @@ const SCHED_TIMELINE_DAYS_ROW = 3;
 const SCHED_FIRST_DATA_ROW = 4;
 const GANTT_FIRST_COLUMN = 9;
 const GANTT_CELL_SIZE_PX = 20;
-const PERT_NODE_ROW_SPACING = 6;
+const PERT_NODE_ROW_SPACING = 7;
 const PERT_ADAPTIVE_DENSE_LEVEL_STEP = 2;
 const PERT_DENSE_LEVEL_ACTIVITY_BUCKET_SIZE = 4;
 const PERT_DENSE_LEVEL_DEPENDENCY_BUCKET_SIZE = 3;
 const PERT_MIN_TERMINAL_ROW_SPACING = 8;
-const PERT_NODE_COLUMN_SPACING = 7;
+const PERT_NODE_COLUMN_SPACING = 8;
 const PERT_NODE_HEIGHT = 3;
 const PERT_NODE_WIDTH = 3;
 const PERT_ARROW_COLOR = '#000000';
@@ -62,6 +62,8 @@ const PERT_ROW_BAND_SPACING = 4;
 const PERT_MIN_CONNECTED_NODE_ROW_DELTA = 3;
 const PERT_ADAPTIVE_ROW_NUDGE = 1;
 const PERT_MAX_ADAPTIVE_ROW_NUDGES_PER_NODE = 2;
+const PERT_LAYOUT_ORDERING_SWEEPS = 4;
+const PERT_LAYOUT_SOURCE_ORDER_TIE_WEIGHT = 0.0001;
 const PERT_MAX_DIRECT_ARROW_RENDER_CELLS = 200000;
 const PERT_MAX_IMAGE_ARROW_COUNT = 200;
 const PERT_IMAGE_ARROW_MAX_NODE_COUNT = 250;
@@ -855,14 +857,16 @@ function buildPertLayout_(schedule) {
   }
 
   let laneById = createPertLaneMap_(activitiesByLevel, maxLevel);
-  for (let level = 1; level <= maxLevel; level++) {
-    sortPertLevelByNeighborLanes_(activitiesByLevel.get(level), laneById, 'predecessors');
-    laneById = createPertLaneMap_(activitiesByLevel, maxLevel);
-  }
+  for (let sweep = 0; sweep < PERT_LAYOUT_ORDERING_SWEEPS; sweep++) {
+    for (let level = 1; level <= maxLevel; level++) {
+      sortPertLevelByNeighborLanes_(activitiesByLevel.get(level), laneById, 'predecessors');
+      laneById = createPertLaneMap_(activitiesByLevel, maxLevel);
+    }
 
-  for (let level = maxLevel - 1; level >= 0; level--) {
-    sortPertLevelByNeighborLanes_(activitiesByLevel.get(level), laneById, 'successors');
-    laneById = createPertLaneMap_(activitiesByLevel, maxLevel);
+    for (let level = maxLevel - 1; level >= 0; level--) {
+      sortPertLevelByNeighborLanes_(activitiesByLevel.get(level), laneById, 'successors');
+      laneById = createPertLaneMap_(activitiesByLevel, maxLevel);
+    }
   }
 
   const positions = new Map();
@@ -887,6 +891,7 @@ function buildPertLayout_(schedule) {
   nudgePertRowsAwayFromDirectArrows_(schedule, positions);
   nudgePertRowsAwayFromDirectArrowCrossings_(schedule, positions);
   enforcePertNodeVerticalGaps_(positions);
+  normalizePertRowsToTop_(positions);
 
   return {
     positions,
@@ -917,6 +922,20 @@ function enforcePertNodeVerticalGaps_(positions) {
         }
         return currentPosition;
       }, null);
+  });
+}
+
+function normalizePertRowsToTop_(positions) {
+  let minimumRowOffset = null;
+  positions.forEach(position => {
+    minimumRowOffset = minimumRowOffset === null
+      ? position.rowOffset
+      : Math.min(minimumRowOffset, position.rowOffset);
+  });
+
+  if (!minimumRowOffset || minimumRowOffset <= 0) return;
+  positions.forEach(position => {
+    position.rowOffset -= minimumRowOffset;
   });
 }
 
@@ -1368,19 +1387,38 @@ function sortPertLevelByNeighborLanes_(activities, laneById, neighborKey) {
   if (!activities || activities.length < 2) return;
 
   activities.sort((a, b) => {
-    const laneDelta = getAveragePertNeighborLane_(a, laneById, neighborKey) - getAveragePertNeighborLane_(b, laneById, neighborKey);
+    const laneDelta = getPertNeighborLaneScore_(a, laneById, neighborKey) - getPertNeighborLaneScore_(b, laneById, neighborKey);
     if (laneDelta !== 0) return laneDelta;
+    const spanDelta = getPertNeighborLaneSpan_(a, laneById, neighborKey) - getPertNeighborLaneSpan_(b, laneById, neighborKey);
+    if (spanDelta !== 0) return spanDelta;
     return comparePertActivitiesBySourceOrder_(a, b);
   });
 }
 
-function getAveragePertNeighborLane_(activity, laneById, neighborKey) {
+function getPertNeighborLaneScore_(activity, laneById, neighborKey) {
+  const neighborLanes = activity[neighborKey]
+    .map(id => laneById.get(id))
+    .filter(lane => lane !== undefined)
+    .sort((a, b) => a - b);
+
+  if (neighborLanes.length === 0) return activity.sourceRow || 0;
+
+  const middleIndex = Math.floor(neighborLanes.length / 2);
+  const medianLane = neighborLanes.length % 2
+    ? neighborLanes[middleIndex]
+    : (neighborLanes[middleIndex - 1] + neighborLanes[middleIndex]) / 2;
+  const averageLane = neighborLanes.reduce((sum, lane) => sum + lane, 0) / neighborLanes.length;
+
+  return (medianLane + averageLane) / 2 + (activity.sourceRow || 0) * PERT_LAYOUT_SOURCE_ORDER_TIE_WEIGHT;
+}
+
+function getPertNeighborLaneSpan_(activity, laneById, neighborKey) {
   const neighborLanes = activity[neighborKey]
     .map(id => laneById.get(id))
     .filter(lane => lane !== undefined);
 
-  if (neighborLanes.length === 0) return activity.sourceRow || 0;
-  return neighborLanes.reduce((sum, lane) => sum + lane, 0) / neighborLanes.length;
+  if (neighborLanes.length < 2) return 0;
+  return Math.max(...neighborLanes) - Math.min(...neighborLanes);
 }
 
 function comparePertActivitiesBySourceOrder_(a, b) {
