@@ -1696,14 +1696,39 @@ function getPertPreferredPixelRoutePoints_(startPoint, endPoint, successorIndex,
     incomingIndex
   );
 
-  for (let index = 0; index < routeCandidates.length; index++) {
-    const route = compactPertPixelRoutePoints_(routeCandidates[index]);
-    if (canUsePertPixelPolylineRoute_(route, positions, sourceId, targetId)) return route;
+  const clearRoutes = routeCandidates
+    .map(route => compactPertPixelRoutePoints_(route))
+    .filter(route => canUsePertPixelPolylineRoute_(route, positions, sourceId, targetId));
+
+  if (clearRoutes.length > 0) {
+    return getShortestPertPixelRoute_(clearRoutes);
   }
 
   // If every detour would still collide, keep a single uninterrupted direct path
   // rather than drawing disconnected fragments.
   return [startPoint, endPoint];
+}
+
+function getShortestPertPixelRoute_(routes) {
+  return routes.reduce((shortestRoute, route) => {
+    if (!shortestRoute) return route;
+
+    const routeLength = getPertPixelRouteLength_(route);
+    const shortestRouteLength = getPertPixelRouteLength_(shortestRoute);
+    if (routeLength < shortestRouteLength) return route;
+    if (routeLength > shortestRouteLength) return shortestRoute;
+
+    return route.length < shortestRoute.length ? route : shortestRoute;
+  }, null);
+}
+
+function getPertPixelRouteLength_(points) {
+  return points.reduce((totalLength, point, index) => {
+    if (index === 0) return totalLength;
+
+    const previous = points[index - 1];
+    return totalLength + Math.hypot(point.x - previous.x, point.y - previous.y);
+  }, 0);
 }
 
 function buildPertContinuousPixelRouteCandidates_(startPoint, endPoint, successorIndex, incomingIndex) {
@@ -2447,12 +2472,24 @@ function getPertOrthogonalRouteRow_(arrowGrid, startPoint, endPoint, bendCol, oc
 
   const candidateRows = getPertGridRouteRowCandidates_(arrowGrid.length, startPoint.row, endPoint.row);
 
-  for (let index = 0; index < candidateRows.length; index++) {
-    const routeRow = candidateRows[index];
-    if (isPertRouteClear_(routeRow, bendCol, endPoint.col, occupiedNodeCells)) return routeRow;
-  }
+  const clearRows = candidateRows.filter(routeRow => {
+    return isPertRouteClear_(routeRow, bendCol, endPoint.col, occupiedNodeCells);
+  });
 
-  return null;
+  if (clearRows.length === 0) return null;
+
+  return clearRows.reduce((shortestRow, routeRow) => {
+    const routeLength = getPertGridRouteLength_(startPoint, endPoint, bendCol, routeRow);
+    const shortestRouteLength = getPertGridRouteLength_(startPoint, endPoint, bendCol, shortestRow);
+    return routeLength < shortestRouteLength ? routeRow : shortestRow;
+  }, clearRows[0]);
+}
+
+function getPertGridRouteLength_(startPoint, endPoint, bendCol, routeRow) {
+  return Math.abs(bendCol - startPoint.col) +
+    Math.abs(routeRow - startPoint.row) +
+    Math.abs(endPoint.col - bendCol) +
+    Math.abs(endPoint.row - routeRow);
 }
 
 function getPertGridRouteRowCandidates_(maxRow, startRow, endRow) {
