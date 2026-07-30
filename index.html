@@ -41,9 +41,13 @@
     .gantt-cell { min-width: 26px; height: 28px; text-align: center; }
     .bar { background: var(--green); color: #fff; font-weight: 700; }
     svg { display: block; min-width: 900px; min-height: 520px; background: #fff; }
-    .node rect { stroke-width: 2; }
+    .node rect { stroke-width: 2; filter: drop-shadow(0 2px 4px rgba(16, 42, 67, .16)); }
     .node text { text-anchor: middle; dominant-baseline: middle; font-size: 13px; }
     .node .activity { font-weight: 700; font-size: 15px; }
+    .node .description { fill: #52606d; font-size: 11px; }
+    .node .label { fill: #52606d; font-size: 10px; text-transform: uppercase; }
+    .pert-level-label { fill: #52606d; font-size: 12px; font-weight: 700; text-anchor: middle; }
+    .pert-arrow { fill: none; stroke-linecap: round; stroke-linejoin: round; }
     .legend { margin-top: 12px; color: #52606d; font-size: 13px; }
     code { background: #eef2f7; padding: 2px 5px; border-radius: 4px; }
   </style>
@@ -366,32 +370,78 @@
       svg.innerHTML = '';
       if (!schedule.length) return;
 
-      const levels = buildLevels(schedule);
+      const pertActivities = buildPertActivities(schedule);
+      const levels = buildLevels(pertActivities);
+      const layout = buildPertLayout(levels);
+      svg.setAttribute('viewBox', '0 0 ' + layout.width + ' ' + layout.height);
+      svg.setAttribute('width', layout.width);
+      svg.setAttribute('height', layout.height);
+      svg.innerHTML = '<defs>'
+        + '<marker id="arrow" markerWidth="14" markerHeight="14" refX="13" refY="7" orient="auto"><path d="M0,0 L14,7 L0,14 z" fill="#1f4e79"/></marker>'
+        + '<marker id="criticalArrow" markerWidth="14" markerHeight="14" refX="13" refY="7" orient="auto"><path d="M0,0 L14,7 L0,14 z" fill="#c00000"/></marker>'
+        + '</defs>';
+
+      drawPertLevelLabels(svg, levels, layout);
+      const routeUsage = new Map();
+      pertActivities.forEach(activity => {
+        activity.successors.forEach((successorId, successorIndex) => {
+          const successor = pertActivities.find(item => item.id === successorId);
+          drawArrow(svg, layout.positions.get(activity.id), layout.positions.get(successorId), activity.isCritical && successor && successor.isCritical, successorIndex, routeUsage);
+        });
+      });
+      pertActivities.forEach(activity => drawNode(svg, activity, layout.positions.get(activity.id)));
+    }
+
+    function buildPertActivities(items) {
+      const firstIds = items.filter(item => !item.predecessors.length).map(item => item.id);
+      const lastIds = items.filter(item => !item.successors.length).map(item => item.id);
+      const projectFinish = Math.max(...items.map(item => item.earlyFinish));
+      const normalized = items.map(item => ({
+        ...item,
+        predecessors: item.predecessors.length ? item.predecessors.slice() : ['START'],
+        successors: item.successors.length ? item.successors.slice() : ['FINISH']
+      }));
+      return [
+        { id: 'START', name: 'Project start', predecessors: [], successors: firstIds, duration: 0, earlyStart: 0, earlyFinish: 0, lateStart: 0, lateFinish: 0, slack: 0, isCritical: true },
+        ...normalized,
+        { id: 'FINISH', name: 'Project finish', predecessors: lastIds, successors: [], duration: 0, earlyStart: projectFinish, earlyFinish: projectFinish, lateStart: projectFinish, lateFinish: projectFinish, slack: 0, isCritical: true }
+      ];
+    }
+
+    function buildPertLayout(levels) {
       const levelWidth = 300;
       const rowHeight = 150;
-      const nodeWidth = 210;
-      const nodeHeight = 84;
-      const maxRows = Math.max(...[...levels.values()].map(items => items.length));
-      const width = Math.max(900, (levels.size + 1) * levelWidth);
-      const height = Math.max(520, maxRows * rowHeight + 120);
-      svg.setAttribute('viewBox', '0 0 ' + width + ' ' + height);
-      svg.setAttribute('width', width);
-      svg.setAttribute('height', height);
-      svg.innerHTML = '<defs><marker id="arrow" markerWidth="16" markerHeight="18" refX="16" refY="9" orient="auto"><path d="M0,0 L16,9 L0,18 z" fill="#4caf50"/></marker><marker id="criticalArrow" markerWidth="16" markerHeight="18" refX="16" refY="9" orient="auto"><path d="M0,0 L16,9 L0,18 z" fill="#c00000"/></marker></defs>';
-
+      const nodeWidth = 220;
+      const nodeHeight = 96;
+      const marginX = 46;
+      const marginY = 76;
       const positions = new Map();
+      const maxRows = Math.max(...[...levels.values()].map(items => items.length));
+      const width = Math.max(980, levels.size * levelWidth + marginX * 2);
+      const height = Math.max(560, maxRows * rowHeight + marginY + 120);
+
       [...levels.entries()].forEach(([level, activities]) => {
+        const totalHeight = (activities.length - 1) * rowHeight;
+        const startY = marginY + Math.max(0, (height - marginY - 120 - totalHeight) / 2);
         activities.forEach((activity, index) => {
-          const x = 40 + level * levelWidth;
-          const y = 50 + index * rowHeight;
-          positions.set(activity.id, { x, y, width: nodeWidth, height: nodeHeight });
+          const x = marginX + level * levelWidth;
+          const y = startY + index * rowHeight;
+          positions.set(activity.id, { x, y, width: nodeWidth, height: nodeHeight, level, index });
         });
       });
 
-      schedule.forEach(activity => {
-        activity.successors.forEach(successorId => drawArrow(svg, positions.get(activity.id), positions.get(successorId), activity.isCritical && schedule.find(item => item.id === successorId)?.isCritical));
+      return { width, height, positions, levelWidth, marginX };
+    }
+
+    function drawPertLevelLabels(svg, levels, layout) {
+      [...levels.keys()].forEach(level => {
+        const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        text.setAttribute('class', 'pert-level-label');
+        text.setAttribute('x', layout.marginX + level * layout.levelWidth + 110);
+        text.setAttribute('y', 36);
+        text.textContent = level === 0 ? 'Start' : (level === levels.size - 1 ? 'Finish' : 'Dependency Level ' + level);
+        svg.appendChild(text);
       });
-      schedule.forEach(activity => drawNode(svg, activity, positions.get(activity.id)));
     }
 
     function buildLevels(items) {
@@ -410,26 +460,34 @@
         if (!levels.has(level)) levels.set(level, []);
         levels.get(level).push(item);
       });
-      return levels;
+      levels.forEach(itemsInLevel => itemsInLevel.sort((a, b) => a.earlyStart - b.earlyStart || a.sourceRow - b.sourceRow || a.id.localeCompare(b.id)));
+      return new Map([...levels.entries()].sort((a, b) => a[0] - b[0]));
     }
 
-    function drawArrow(svg, from, to, critical) {
+    function drawArrow(svg, from, to, critical, successorIndex, routeUsage) {
       if (!from || !to) return;
       const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-      const startX = from.x + from.width;
+      const startX = from.x + from.width + 8;
       const startY = from.y + from.height / 2;
-      const endX = to.x;
+      const endX = to.x - 10;
       const endY = to.y + to.height / 2;
-      const midX = (startX + endX) / 2;
-      path.setAttribute('d', 'M ' + startX + ' ' + startY + ' C ' + midX + ' ' + startY + ', ' + midX + ' ' + endY + ', ' + endX + ' ' + endY);
-      path.setAttribute('fill', 'none');
-      path.setAttribute('stroke', critical ? '#c00000' : '#4caf50');
-      path.setAttribute('stroke-width', '4');
+      const key = Math.round(startY) + ':' + Math.round(endY) + ':' + from.level + ':' + to.level;
+      const useCount = routeUsage.get(key) || 0;
+      routeUsage.set(key, useCount + 1);
+      const spread = (successorIndex - 1) * 12 + useCount * 8;
+      const midX = startX + Math.max(44, (endX - startX) / 2) + spread;
+      const d = ['M', startX, startY, 'L', midX, startY, 'L', midX, endY, 'L', endX, endY].join(' ');
+      path.setAttribute('d', d);
+      path.setAttribute('class', 'pert-arrow');
+      path.setAttribute('stroke', critical ? '#c00000' : '#1f4e79');
+      path.setAttribute('stroke-width', critical ? '3.5' : '2.5');
       path.setAttribute('marker-end', critical ? 'url(#criticalArrow)' : 'url(#arrow)');
+      path.setAttribute('opacity', critical ? '1' : '.78');
       svg.appendChild(path);
     }
 
     function drawNode(svg, activity, box) {
+      if (!box) return;
       const group = document.createElementNS('http://www.w3.org/2000/svg', 'g');
       group.setAttribute('class', 'node');
       const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
@@ -437,18 +495,27 @@
       rect.setAttribute('y', box.y);
       rect.setAttribute('width', box.width);
       rect.setAttribute('height', box.height);
-      rect.setAttribute('rx', '8');
+      rect.setAttribute('rx', activity.duration === 0 ? '28' : '10');
       rect.setAttribute('fill', activity.isCritical ? '#fce4d6' : '#ffffff');
-      rect.setAttribute('stroke', activity.isCritical ? '#c00000' : '#111827');
+      rect.setAttribute('stroke', activity.isCritical ? '#c00000' : '#1f4e79');
       group.appendChild(rect);
-      addSvgText(group, box.x + box.width / 6, box.y + box.height / 6, activity.earlyStart);
-      addSvgText(group, box.x + box.width / 2, box.y + box.height / 6, activity.duration);
-      addSvgText(group, box.x + box.width * 5 / 6, box.y + box.height / 6, activity.earlyFinish);
-      addSvgText(group, box.x + box.width / 2, box.y + box.height / 2, activity.id, 'activity');
-      addSvgText(group, box.x + box.width / 6, box.y + box.height * 5 / 6, activity.lateStart);
-      addSvgText(group, box.x + box.width / 2, box.y + box.height * 5 / 6, activity.slack);
-      addSvgText(group, box.x + box.width * 5 / 6, box.y + box.height * 5 / 6, activity.lateFinish);
+      addSvgText(group, box.x + box.width / 6, box.y + 17, 'ES', 'label');
+      addSvgText(group, box.x + box.width / 2, box.y + 17, 'DUR', 'label');
+      addSvgText(group, box.x + box.width * 5 / 6, box.y + 17, 'EF', 'label');
+      addSvgText(group, box.x + box.width / 6, box.y + 34, activity.earlyStart);
+      addSvgText(group, box.x + box.width / 2, box.y + 34, activity.duration);
+      addSvgText(group, box.x + box.width * 5 / 6, box.y + 34, activity.earlyFinish);
+      addSvgText(group, box.x + box.width / 2, box.y + 55, activity.id, 'activity');
+      addSvgText(group, box.x + box.width / 2, box.y + 72, shortenText(activity.name, 26), 'description');
+      addSvgText(group, box.x + box.width / 6, box.y + 88, activity.lateStart);
+      addSvgText(group, box.x + box.width / 2, box.y + 88, 'Slack ' + activity.slack);
+      addSvgText(group, box.x + box.width * 5 / 6, box.y + 88, activity.lateFinish);
       svg.appendChild(group);
+    }
+
+    function shortenText(value, maxLength) {
+      const text = String(value || '');
+      return text.length > maxLength ? text.slice(0, maxLength - 1) + '…' : text;
     }
 
     function addSvgText(group, x, y, value, className) {
