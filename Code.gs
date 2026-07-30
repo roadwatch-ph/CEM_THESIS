@@ -71,7 +71,7 @@ const PERT_ARROW_IMAGE_STROKE_WIDTH = 1;
 const PERT_ARROW_IMAGE_HEAD_LENGTH = 8;
 const PERT_ARROW_IMAGE_HEAD_HALF_WIDTH = 4;
 const PERT_ARROW_GRID_CONNECTOR_GLYPHS = new Set(['━', '┃', '┼']);
-const PERT_USE_BORDER_ARROW_CONNECTORS = false;
+const PERT_USE_BORDER_ARROW_CONNECTORS = true;
 const PERT_ARROW_MARKER_SIZE = 18;
 const PERT_WEB_ARROW_STROKE_WIDTH = 1;
 const DEFAULT_WBS_SHEET_NAME = 'WBS';
@@ -767,7 +767,7 @@ function renderPertDiagram_(pert, schedule) {
   breakApartOverlappingMergedRanges_(pertDescriptionRange);
   pertDescriptionRange
     .mergeAcross()
-    .setValue('Each node shows ES, Duration, EF on top; Activity ID in the middle; and LS, Slack, LF on the bottom. Arrows are rendered as drawn SVG arrow connectors first, with cell-based arrow glyphs only as a fallback for very large diagrams.')
+    .setValue('Each node shows ES, Duration, EF on top; Activity ID in the middle; and LS, Slack, LF on the bottom. Arrows are rendered as drawn SVG arrow connectors first, with border-based arrow connectors only as a fallback for very large diagrams.')
     .setHorizontalAlignment('center')
     .setWrap(true)
     .setBackground('#ddebf7');
@@ -1541,10 +1541,14 @@ function renderPertArrowGrid_(pert, arrowGrid, rowsNeeded, columnsNeeded) {
 }
 
 function createPertArrowDisplayGrid_(arrowGrid) {
-  // When over-the-grid image arrows cannot be inserted, keep using visible
-  // arrow/connector glyphs instead of spreadsheet border lines so the PERT
-  // dependencies remain drawn arrow lines rather than cell borders.
-  return arrowGrid;
+  if (!PERT_USE_BORDER_ARROW_CONNECTORS) return arrowGrid;
+
+  // Hide line/intersection glyphs when fallback arrows use cell borders. Keeping
+  // those glyphs visible makes the diagram look like dashed "+" text instead
+  // of clean connector lines; only arrowhead glyphs should remain in cells.
+  return arrowGrid.map(row => row.map(glyph => {
+    return PERT_ARROW_GRID_CONNECTOR_GLYPHS.has(glyph) ? '' : glyph;
+  }));
 }
 
 function stylePertArrowGridConnectors_(pert, arrowGrid) {
