@@ -2511,10 +2511,11 @@ function drawPertSmartArrow_(arrowGrid, sourcePosition, targetPosition, successo
     return;
   }
 
-  // The grid renderer is only a fallback for cases where image arrows cannot be
-  // inserted. Prefer orthogonal border routes here because spreadsheet cells do
-  // not have a native continuous diagonal line primitive; diagonal glyphs render
-  // as disconnected slashes in large cells.
+  if (canDrawPertContinuousRoute_(arrowGrid, startPoint, endPoint, occupiedNodeCells)) {
+    drawPertStraightOrDiagonalArrow_(arrowGrid, startPoint, endPoint);
+    return;
+  }
+
   drawPertOrthogonalSmartArrow_(arrowGrid, startPoint, endPoint, successorIndex, incomingIndex, occupiedNodeCells);
 }
 
@@ -2544,7 +2545,7 @@ function renderPertSmartArrow_(pert, sourcePosition, targetPosition, successorIn
     return;
   }
 
-  renderPertOrthogonalSmartArrow_(pert, startPoint, endPoint, successorIndex, incomingIndex);
+  renderPertStraightOrDiagonalArrow_(pert, startPoint, endPoint);
 }
 
 function getPertArrowStartPoint_(sourceRow, sourceCol) {
@@ -2791,6 +2792,47 @@ function drawPertDiagonalArrow_(arrowGrid, startPoint, endPoint) {
   } else {
     setPertArrowGlyph_(arrowGrid, endPoint.row, arrowCol, arrowGlyph);
   }
+}
+
+function renderPertStraightOrDiagonalArrow_(pert, startPoint, endPoint) {
+  const rowDelta = endPoint.row - startPoint.row;
+  const colDelta = endPoint.col - startPoint.col;
+  const steps = Math.max(Math.abs(rowDelta), Math.abs(colDelta), 1);
+
+  if (rowDelta === 0) {
+    renderPertHorizontalArrowLine_(pert, startPoint.row, startPoint.col, endPoint.col);
+    renderPertArrowHead_(pert, endPoint.row, endPoint.col, '➜');
+    return;
+  }
+
+  let horizontalRunStart = null;
+  let horizontalRunEnd = null;
+
+  for (let stepIndex = 0; stepIndex < steps; stepIndex++) {
+    const row = Math.round(startPoint.row + rowDelta * stepIndex / steps);
+    const col = Math.round(startPoint.col + colDelta * stepIndex / steps);
+    const nextRow = Math.round(startPoint.row + rowDelta * (stepIndex + 1) / steps);
+
+    if (nextRow === row) {
+      horizontalRunStart = horizontalRunStart === null ? col : horizontalRunStart;
+      horizontalRunEnd = col;
+      continue;
+    }
+
+    if (horizontalRunStart !== null) {
+      renderPertHorizontalConnector_(pert, row, horizontalRunStart, horizontalRunEnd);
+      horizontalRunStart = null;
+      horizontalRunEnd = null;
+    }
+
+    renderPertDiagonalConnector_(pert, row, col, nextRow > row ? '╲' : '╱');
+  }
+
+  if (horizontalRunStart !== null) {
+    renderPertHorizontalConnector_(pert, endPoint.row, horizontalRunStart, horizontalRunEnd);
+  }
+
+  renderPertArrowHead_(pert, endPoint.row, endPoint.col, rowDelta > 0 ? '↘' : '↗');
 }
 
 function drawPertStraightOrDiagonalArrow_(arrowGrid, startPoint, endPoint) {
