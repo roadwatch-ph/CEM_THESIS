@@ -74,6 +74,7 @@ const PERT_ARROW_IMAGE_HEAD_LENGTH = 14;
 const PERT_ARROW_IMAGE_HEAD_HALF_WIDTH = 7;
 const PERT_ARROW_GRID_CONNECTOR_GLYPHS = new Set(['━', '┃', '┼']);
 const PERT_USE_BORDER_ARROW_CONNECTORS = false;
+const PERT_USE_TEXT_GLYPH_ARROW_FALLBACK = false;
 const PERT_ARROW_MARKER_SIZE = 18;
 const PERT_WEB_ARROW_STROKE_WIDTH = 1;
 const DEFAULT_WBS_SHEET_NAME = 'WBS';
@@ -769,7 +770,7 @@ function renderPertDiagram_(pert, schedule) {
   breakApartOverlappingMergedRanges_(pertDescriptionRange);
   pertDescriptionRange
     .mergeAcross()
-    .setValue('Each node shows ES, Duration, EF on top; Activity ID in the middle; and LS, Slack, LF on the bottom. Arrows are rendered as drawn SVG arrow connectors first, with text-glyph arrow connectors only as a fallback for very large diagrams so they do not appear as spreadsheet borders.')
+    .setValue('Each node shows ES, Duration, EF on top; Activity ID in the middle; and LS, Slack, LF on the bottom. Arrows are rendered only as drawn over-grid SVG/PNG arrow images so connectors appear as actual arrows instead of spreadsheet borders or text glyphs.')
     .setHorizontalAlignment('center')
     .setWrap(true)
     .setBackground('#ddebf7');
@@ -1469,7 +1470,9 @@ function renderPertArrows_(pert, schedule, layout, rowsNeeded, columnsNeeded) {
     return false;
   }
 
-  let fallbackArrowGrid = shouldUseImageArrows ? null : createPertArrowGrid_(rowsNeeded, columnsNeeded);
+  let fallbackArrowGrid = PERT_USE_TEXT_GLYPH_ARROW_FALLBACK && !shouldUseImageArrows
+    ? createPertArrowGrid_(rowsNeeded, columnsNeeded)
+    : null;
   let occupiedNodeCells = fallbackArrowGrid ? createPertOccupiedNodeCellSet_(layout.positions) : null;
 
   arrowRoutes.forEach(route => {
@@ -1487,7 +1490,7 @@ function renderPertArrows_(pert, schedule, layout, rowsNeeded, columnsNeeded) {
       route.color
     );
 
-    if (!wasRenderedAsImage) {
+    if (!wasRenderedAsImage && PERT_USE_TEXT_GLYPH_ARROW_FALLBACK) {
       if (!fallbackArrowGrid) {
         fallbackArrowGrid = createPertArrowGrid_(rowsNeeded, columnsNeeded);
         occupiedNodeCells = createPertOccupiedNodeCellSet_(layout.positions);
