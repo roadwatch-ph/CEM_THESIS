@@ -51,12 +51,12 @@
 <body>
   <header>
     <h1>WBS, Scheduling, and PERT Dashboard</h1>
-    <p>Standalone HTML website. Connect the optional API URL to your Google Sheet endpoint when ready.</p>
+    <p>Standalone HTML website. Connected to the configured Google Sheet web app endpoint.</p>
   </header>
 
   <main>
     <div class="notice">
-      <strong>Google Sheet connection:</strong> palitan ang <code>GOOGLE_SHEET_API_URL</code> sa script section ng URL ng Apps Script/Web App endpoint mo. Kapag may URL na, automatic itong maglo-load at magse-save sa endpoint; habang blank pa, local browser storage muna ang gamit.
+      <strong>Google Sheet connection:</strong> nakakonekta na ang dashboard sa configured Apps Script/Web App endpoint. Gagamit ito ng local browser storage kung hindi maabot ang endpoint.
     </div>
 
     <div id="message"></div>
@@ -106,7 +106,7 @@
     // Paste your Apps Script/Web App endpoint here when you are ready to connect Google Sheets.
     // Expected GET response: [{ id, name, predecessors, duration }, ...]
     // Expected POST body: { rows: [{ id, name, predecessors, duration }, ...] }
-    const GOOGLE_SHEET_API_URL = '';
+    const GOOGLE_SHEET_API_URL = 'https://script.google.com/macros/s/AKfycbzDTV0Ct2J-Z3HP5shondEei-7YwK3YRv383Z-BDH4StpKawrGtsvNZixqMRGKCv84RRA/exec';
     const STORAGE_KEY = 'wbs-scheduling-pert-dashboard';
 
     const sampleRows = [
