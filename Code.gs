@@ -46,9 +46,9 @@ const PERT_ARROW_IMAGE_FILE_NAME = 'pert-arrow.png';
 const PERT_ARROW_SVG_IMAGE_FILE_NAME = 'pert-arrow.svg';
 const PERT_CELL_WIDTH_PX = 80;
 const PERT_CELL_HEIGHT_PX = 28;
-const PERT_ARROW_IMAGE_PADDING_PX = 4;
-const PERT_ARROW_IMAGE_NODE_GAP_PX = 0;
-const PERT_ARROW_IMAGE_TARGET_GAP_PX = 0;
+const PERT_ARROW_IMAGE_PADDING_PX = 14;
+const PERT_ARROW_IMAGE_NODE_GAP_PX = 6;
+const PERT_ARROW_IMAGE_TARGET_GAP_PX = 10;
 const PERT_ORTHOGONAL_ROUTE_ROW_CLEARANCE_PX = 18;
 const PERT_ORTHOGONAL_ROUTE_ROW_STEP_PX = PERT_CELL_HEIGHT_PX;
 const PERT_MAX_ORTHOGONAL_ROUTE_ROW_ATTEMPTS = 12;
@@ -66,13 +66,13 @@ const PERT_MAX_DIRECT_ARROW_RENDER_CELLS = 200000;
 const PERT_MAX_IMAGE_ARROW_COUNT = 200;
 const PERT_IMAGE_ARROW_MAX_NODE_COUNT = 250;
 const PERT_USE_IMAGE_ARROWS = true;
-const PERT_ARROW_IMAGE_STROKE_WIDTH = 2;
-const PERT_ARROW_IMAGE_HEAD_LENGTH = 9;
-const PERT_ARROW_IMAGE_HEAD_HALF_WIDTH = 5;
+const PERT_ARROW_IMAGE_STROKE_WIDTH = 4;
+const PERT_ARROW_IMAGE_HEAD_LENGTH = 16;
+const PERT_ARROW_IMAGE_HEAD_HALF_WIDTH = 9;
 const PERT_ARROW_GRID_CONNECTOR_GLYPHS = new Set(['━', '┃', '┼']);
 const PERT_USE_BORDER_ARROW_CONNECTORS = true;
-const PERT_ARROW_MARKER_SIZE = 12;
-const PERT_WEB_ARROW_STROKE_WIDTH = 3;
+const PERT_ARROW_MARKER_SIZE = 18;
+const PERT_WEB_ARROW_STROKE_WIDTH = 4;
 const DEFAULT_WBS_SHEET_NAME = 'WBS';
 const DEFAULT_SCHED_SHEET_NAME = 'Scheduling';
 const DEFAULT_PERT_SHEET_NAME = 'PERT Diagram';
@@ -1664,8 +1664,8 @@ function renderPertImageArrow_(pert, sourcePosition, targetPosition, successorIn
   const xOffset = Math.max(0, Math.round(minX - (anchorCol - 1) * PERT_CELL_WIDTH_PX));
   const yOffset = Math.max(0, Math.round(minY - (anchorRow - 1) * PERT_CELL_HEIGHT_PX));
   const blobFactories = [
-    () => createPertArrowRoutePngBlob_(imageWidth, imageHeight, localizedRoutePoints, arrowColor),
     () => createPertArrowRouteSvgBlob_(imageWidth, imageHeight, localizedRoutePoints, arrowColor),
+    () => createPertArrowRoutePngBlob_(imageWidth, imageHeight, localizedRoutePoints, arrowColor),
   ];
 
   for (let index = 0; index < blobFactories.length; index++) {
@@ -2262,11 +2262,15 @@ function createPertArrowRouteSvg_(width, height, points, arrowColor) {
   const safeHeight = Math.max(1, Math.ceil(height));
   const safeArrowColor = arrowColor || PERT_ARROW_COLOR;
   const pointList = points.map(point => `${formatPertSvgNumber_(point.x)},${formatPertSvgNumber_(point.y)}`).join(' ');
+  const markerTipX = PERT_ARROW_IMAGE_HEAD_LENGTH;
+  const markerCenterY = PERT_ARROW_IMAGE_HEAD_HALF_WIDTH;
+  const markerHeight = PERT_ARROW_IMAGE_HEAD_HALF_WIDTH * 2;
+  const markerWidth = PERT_ARROW_IMAGE_HEAD_LENGTH;
   return [
     `<svg xmlns="http://www.w3.org/2000/svg" width="${safeWidth}" height="${safeHeight}" viewBox="0 0 ${safeWidth} ${safeHeight}">`,
     '<defs>',
-    `<marker id="arrowhead" markerWidth="${PERT_ARROW_MARKER_SIZE}" markerHeight="${PERT_ARROW_MARKER_SIZE}" refX="11" refY="6" orient="auto" markerUnits="userSpaceOnUse">`,
-    `<path d="M 0 0 L 12 6 L 0 12 z" fill="${safeArrowColor}"/>`,
+    `<marker id="arrowhead" markerWidth="${markerWidth}" markerHeight="${markerHeight}" refX="${markerTipX}" refY="${markerCenterY}" orient="auto" markerUnits="userSpaceOnUse">`,
+    `<path d="M 0 0 L ${markerTipX} ${markerCenterY} L 0 ${markerHeight} z" fill="${safeArrowColor}"/>`,
     '</marker>',
     '</defs>',
     `<polyline points="${pointList}" fill="none" stroke="${safeArrowColor}" stroke-width="${PERT_ARROW_IMAGE_STROKE_WIDTH}" marker-end="url(#arrowhead)" stroke-linecap="round" stroke-linejoin="round"/>`,
@@ -3219,8 +3223,8 @@ function renderDiagram(sheet) {
   svg.setAttribute('width', sheet.width);
   svg.setAttribute('height', sheet.height);
   svg.innerHTML = '<defs>' +
-    '<marker id="arrow-normal" markerWidth="12" markerHeight="12" refX="11" refY="6" orient="auto"><path d="M0,0 L12,6 L0,12 z" fill="${PERT_ARROW_COLOR}"/></marker>' +
-    '<marker id="arrow-critical" markerWidth="12" markerHeight="12" refX="11" refY="6" orient="auto"><path d="M0,0 L12,6 L0,12 z" fill="${PERT_CRITICAL_ARROW_COLOR}"/></marker>' +
+    '<marker id="arrow-normal" markerWidth="${PERT_ARROW_IMAGE_HEAD_LENGTH}" markerHeight="${PERT_ARROW_IMAGE_HEAD_HALF_WIDTH * 2}" refX="${PERT_ARROW_IMAGE_HEAD_LENGTH}" refY="${PERT_ARROW_IMAGE_HEAD_HALF_WIDTH}" orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0 L${PERT_ARROW_IMAGE_HEAD_LENGTH},${PERT_ARROW_IMAGE_HEAD_HALF_WIDTH} L0,${PERT_ARROW_IMAGE_HEAD_HALF_WIDTH * 2} z" fill="${PERT_ARROW_COLOR}"/></marker>' +
+    '<marker id="arrow-critical" markerWidth="${PERT_ARROW_IMAGE_HEAD_LENGTH}" markerHeight="${PERT_ARROW_IMAGE_HEAD_HALF_WIDTH * 2}" refX="${PERT_ARROW_IMAGE_HEAD_LENGTH}" refY="${PERT_ARROW_IMAGE_HEAD_HALF_WIDTH}" orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0 L${PERT_ARROW_IMAGE_HEAD_LENGTH},${PERT_ARROW_IMAGE_HEAD_HALF_WIDTH} L0,${PERT_ARROW_IMAGE_HEAD_HALF_WIDTH * 2} z" fill="${PERT_CRITICAL_ARROW_COLOR}"/></marker>' +
     '</defs>';
   sheet.links.forEach(link => {
     const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
