@@ -55,6 +55,7 @@ const PERT_MAX_ORTHOGONAL_ROUTE_ROW_ATTEMPTS = 12;
 const PERT_ARROW_BOX_CLEARANCE_PX = 8;
 const PERT_MAX_ARROW_BOX_AVOIDANCE_PASSES = 12;
 const PERT_MAX_ARROW_CROSSING_AVOIDANCE_PASSES = 12;
+const PERT_LONG_SPAN_SOURCE_DROP_ROWS = PERT_NODE_HEIGHT + 1;
 const PERT_MAX_ARROW_IMAGE_PIXELS = 2500000;
 const PERT_MAX_ARROW_IMAGE_BYTES = 12000000;
 const PERT_MAX_LEVELS_PER_ROW_BAND = 120;
@@ -889,6 +890,7 @@ function buildPertLayout_(schedule) {
   alignPertFinishMilestoneRow_(schedule, positions);
   expandPertRowsForArrowClearance_(schedule, positions);
   nudgePertRowsForFanClarity_(schedule, positions);
+  lowerPertLongSpanSourcesAwayFromDirectArrows_(schedule, positions);
   nudgePertRowsAwayFromDirectArrows_(schedule, positions);
   nudgePertRowsAwayFromDirectArrowCrossings_(schedule, positions);
   enforcePertNodeVerticalGaps_(positions);
@@ -1052,6 +1054,74 @@ function nudgePertLevelRowsFrom_(positions, anchorPosition, rowsToAdd) {
     if (position.band !== anchorPosition.band || position.renderedLevel !== anchorPosition.renderedLevel) return;
     if (position.rowOffset >= anchorPosition.rowOffset) position.rowOffset += rowsToAdd;
   });
+}
+
+
+function lowerPertLongSpanSourcesAwayFromDirectArrows_(schedule, positions) {
+  const activityById = new Map(schedule.map(activity => [activity.id, activity]));
+
+  for (let pass = 0; pass < PERT_MAX_ARROW_BOX_AVOIDANCE_PASSES; pass++) {
+    const overlap = findPertLongSpanSourceDropOverlap_(schedule, activityById, positions);
+    if (!overlap) return;
+
+    nudgePertLevelRowsFrom_(positions, overlap.sourcePosition, PERT_LONG_SPAN_SOURCE_DROP_ROWS);
+  }
+}
+
+function findPertLongSpanSourceDropOverlap_(schedule, activityById, positions) {
+  for (let activityIndex = 0; activityIndex < schedule.length; activityIndex++) {
+    const activity = schedule[activityIndex];
+    const sourcePosition = positions.get(activity.id);
+    if (!sourcePosition) continue;
+
+    for (let successorIndex = 0; successorIndex < activity.successors.length; successorIndex++) {
+      const successorId = activity.successors[successorIndex];
+      const successor = activityById.get(successorId);
+      const targetPosition = positions.get(successorId);
+      if (!successor || !targetPosition) continue;
+
+      const points = getPertArrowPixelConnectionPoints_(
+        sourcePosition,
+        targetPosition,
+        successorIndex,
+        activity.successors.length,
+        successor.predecessors.indexOf(activity.id),
+        successor.predecessors.length
+      );
+
+      applyPertArrowEndpointGap_(points.start, points.end, PERT_ARROW_IMAGE_NODE_GAP_PX);
+
+      const blockingNode = findPertNodeBlockingDirectArrow_(positions, activity.id, successorId, points.start, points.end);
+      if (!blockingNode) continue;
+
+      const overlap = {
+        sourceId: activity.id,
+        targetId: successorId,
+        sourcePosition,
+        targetPosition,
+        blockingNode,
+      };
+
+      if (shouldLowerPertLongSpanSource_(overlap)) return overlap;
+    }
+  }
+
+  return null;
+}
+
+function shouldLowerPertLongSpanSource_(overlap) {
+  if (overlap.sourceId === PERT_START_MILESTONE_ID || overlap.targetId === PERT_FINISH_MILESTONE_ID) return false;
+
+  const renderedLevelSpan = Math.abs(overlap.targetPosition.renderedLevel - overlap.sourcePosition.renderedLevel);
+  if (renderedLevelSpan < 2) return false;
+
+  const blockingLevel = overlap.blockingNode.position.renderedLevel;
+  const isBlockingNodeBetweenEndpoints = blockingLevel > Math.min(overlap.sourcePosition.renderedLevel, overlap.targetPosition.renderedLevel) &&
+    blockingLevel < Math.max(overlap.sourcePosition.renderedLevel, overlap.targetPosition.renderedLevel);
+  if (!isBlockingNodeBetweenEndpoints) return false;
+
+  const sourceTargetRowDelta = Math.abs(overlap.targetPosition.rowOffset - overlap.sourcePosition.rowOffset);
+  return sourceTargetRowDelta <= PERT_MIN_CONNECTED_NODE_ROW_DELTA;
 }
 
 function nudgePertRowsAwayFromDirectArrows_(schedule, positions) {
