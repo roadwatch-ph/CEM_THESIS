@@ -7,7 +7,6 @@
  *   C: Predecessor (dash/blank for none, comma-separated IDs for multiple)
  *   D: Duration
  *   E: Resources (optional, comma-separated resources assigned to the activity)
- *   F: % Complete (optional, 0-100 or 0%-100%)
  *
  * Scheduling output:
  *   A-D: copied WBS details
@@ -17,10 +16,8 @@
  *   H: Late Finish
  *   I: Slack
  *   J: Critical
- *   K: % Complete
- *   L: Status
- *   M: Resources
- *   N onward: MS Project-style Gantt timeline
+ *   K: Resources
+ *   L onward: MS Project-style Gantt timeline
  *
  * Resource scheduling output:
  *   One resource scheduling tab per WBS, linked to the schedule dates and
@@ -35,7 +32,7 @@ const SCHED_TIMELINE_LABEL_ROW = 1;
 const SCHED_TIMELINE_TENS_ROW = 2;
 const SCHED_TIMELINE_DAYS_ROW = 3;
 const SCHED_FIRST_DATA_ROW = 4;
-const GANTT_FIRST_COLUMN = 14;
+const GANTT_FIRST_COLUMN = 12;
 const GANTT_CELL_SIZE_PX = 20;
 const PERT_NODE_ROW_SPACING = 7;
 const PERT_ADAPTIVE_DENSE_LEVEL_STEP = 2;
@@ -332,7 +329,7 @@ function generateScheduleForWbsSheet_(ss, wbs) {
     return;
   }
 
-  const rows = wbs.getRange(2, 1, lastRow - 1, Math.max(6, wbs.getLastColumn())).getValues();
+  const rows = wbs.getRange(2, 1, lastRow - 1, Math.max(5, wbs.getLastColumn())).getValues();
   const activities = parseAndValidateWbs_(rows, wbs.getName());
 
   if (activities.length === 0) {
@@ -579,7 +576,6 @@ function parseAndValidateWbs_(rows, wbsSheetName) {
     const predecessors = parsePredecessors_(row[2]);
     const duration = Number(row[3]);
     const resources = parseResources_(row[4]);
-    const percentComplete = parsePercentComplete_(row[5]);
 
     if (!id) errors.push(`${wbsSheetName} row ${sheetRow}: missing Activity ID.`);
     if (id && idSet.has(canonicalId)) errors.push(`${wbsSheetName} row ${sheetRow}: duplicate Activity ID "${id}".`);
@@ -587,15 +583,11 @@ function parseAndValidateWbs_(rows, wbsSheetName) {
     if (!Number.isFinite(duration) || duration <= 0) {
       errors.push(`${wbsSheetName} row ${sheetRow}: Duration must be a positive number.`);
     }
-    if (percentComplete === null) {
-      errors.push(`${wbsSheetName} row ${sheetRow}: % Complete must be blank or a value from 0 to 100.`);
-    }
-
     if (id) {
       idSet.add(canonicalId);
       if (!idByCanonicalId.has(canonicalId)) idByCanonicalId.set(canonicalId, id);
     }
-    activities.push({ id, name, predecessors, duration, resources, percentComplete: percentComplete === null ? 0 : percentComplete, sourceRow: sheetRow });
+    activities.push({ id, name, predecessors, duration, resources, sourceRow: sheetRow });
   });
 
   activities.forEach(activity => {
@@ -620,19 +612,6 @@ function parseAndValidateWbs_(rows, wbsSheetName) {
   }
 
   return activities;
-}
-
-function parsePercentComplete_(value) {
-  if (value === null || value === undefined || value === '') return 0;
-
-  const rawValue = String(value).trim();
-  if (!rawValue || rawValue === '-') return 0;
-
-  const normalizedValue = rawValue.endsWith('%') ? rawValue.slice(0, -1).trim() : rawValue;
-  const percentComplete = Number(normalizedValue);
-
-  if (!Number.isFinite(percentComplete) || percentComplete < 0 || percentComplete > 100) return null;
-  return percentComplete;
 }
 
 function parseResources_(value) {
@@ -770,7 +749,6 @@ function computeSchedule_(orderedActivities) {
       predecessors: activity.predecessors,
       duration: activity.duration,
       resources: activity.resources || [],
-      percentComplete: activity.percentComplete || 0,
       earlyStart,
       earlyFinish,
       lateStart: null,
@@ -818,8 +796,6 @@ function renderSchedule_(sched, schedule) {
     activity.lateFinish,
     activity.slack,
     activity.isCritical ? 'Yes' : 'No',
-    activity.percentComplete,
-    getActivityStatus_(activity),
     activity.resources.length ? activity.resources.join(', ') : '-',
   ]);
 
@@ -830,12 +806,12 @@ function renderSchedule_(sched, schedule) {
 
   renderScheduleTitle_(sched);
 
-  const tableHeaderRange = sched.getRange(SCHED_HEADER_ROW, 1, 1, 13);
-  tableHeaderRange.setValues([['Activity ID', 'Activity Description', 'Predecessor', 'Duration', 'Early Start', 'Early Finish', 'Late Start', 'Late Finish', 'Slack', 'Critical', '% Complete', 'Status', 'Resources']]);
-  sched.getRange(SCHED_FIRST_DATA_ROW, 1, output.length, 13).setValues(output);
+  const tableHeaderRange = sched.getRange(SCHED_HEADER_ROW, 1, 1, 11);
+  tableHeaderRange.setValues([['Activity ID', 'Activity Description', 'Predecessor', 'Duration', 'Early Start', 'Early Finish', 'Late Start', 'Late Finish', 'Slack', 'Critical', 'Resources']]);
+  sched.getRange(SCHED_FIRST_DATA_ROW, 1, output.length, 11).setValues(output);
   sched.getRange(SCHED_FIRST_DATA_ROW, 1, output.length, 1).setHorizontalAlignment('center');
-  sched.getRange(SCHED_FIRST_DATA_ROW, 3, output.length, 9).setHorizontalAlignment('center');
-  sched.getRange(SCHED_FIRST_DATA_ROW, 13, output.length, 1).setWrap(true);
+  sched.getRange(SCHED_FIRST_DATA_ROW, 3, output.length, 8).setHorizontalAlignment('center');
+  sched.getRange(SCHED_FIRST_DATA_ROW, 11, output.length, 1).setWrap(true);
   sched.autoResizeColumn(2);
 
   renderTimelineHeaders_(sched, timeline);
@@ -846,10 +822,6 @@ function renderSchedule_(sched, schedule) {
 
   const backgrounds = schedule.map(activity => timeline.map(day => {
     if (!(day > activity.earlyStart && day <= activity.earlyFinish)) return null;
-
-    const elapsedDay = day - activity.earlyStart;
-    const completedDays = Math.ceil(activity.duration * activity.percentComplete / 100);
-    if (completedDays > 0 && elapsedDay <= completedDays) return '#1f4e79';
     return activity.isCritical ? '#c00000' : '#4CAF50';
   }));
   const ganttValues = schedule.map(activity => timeline.map(day => {
@@ -864,29 +836,16 @@ function renderSchedule_(sched, schedule) {
     .setFontWeights(ganttFontWeights)
     .setHorizontalAlignment('center')
     .setVerticalAlignment('middle');
-  applyScheduleStatusFormatting_(sched, schedule);
+  applyScheduleCriticalFormatting_(sched, schedule);
   styleSchedule_(sched, output.length, timeline.length);
   resizeGanttCells_(sched, output.length, timeline.length);
   sched.setFrozenRows(SCHED_TIMELINE_DAYS_ROW);
   sched.setFrozenColumns(GANTT_FIRST_COLUMN - 1);
 }
 
-function getActivityStatus_(activity) {
-  if (activity.percentComplete >= 100) return 'Complete';
-  if (activity.percentComplete > 0) return 'In Progress';
-  return 'Not Started';
-}
-
-function applyScheduleStatusFormatting_(sched, schedule) {
+function applyScheduleCriticalFormatting_(sched, schedule) {
   const criticalBackgrounds = schedule.map(activity => [activity.isCritical ? '#f4cccc' : null]);
-  const statusBackgrounds = schedule.map(activity => {
-    if (activity.percentComplete >= 100) return ['#d9ead3'];
-    if (activity.percentComplete > 0) return ['#fff2cc'];
-    return [null];
-  });
-
   sched.getRange(SCHED_FIRST_DATA_ROW, 10, schedule.length, 1).setBackgrounds(criticalBackgrounds);
-  sched.getRange(SCHED_FIRST_DATA_ROW, 12, schedule.length, 1).setBackgrounds(statusBackgrounds);
 }
 
 function renderResourceScheduleTab_(resourceSched, schedule) {
@@ -906,8 +865,6 @@ function renderResourceScheduleTab_(resourceSched, schedule) {
     activity.earlyFinish,
     activity.slack,
     activity.isCritical ? 'Yes' : 'No',
-    activity.percentComplete,
-    getActivityStatus_(activity),
     activity.resources.length ? activity.resources.join(', ') : '-',
   ]);
   const loadingStartRow = SCHED_FIRST_DATA_ROW + activityOutput.length + RESOURCE_SCHEDULE_HEADER_GAP_ROWS;
@@ -927,21 +884,21 @@ function renderResourceScheduleTab_(resourceSched, schedule) {
     .setBackground('#1f4e79')
     .setFontColor('#ffffff');
 
-  const activityHeaderRange = resourceSched.getRange(SCHED_HEADER_ROW, 1, 1, 11);
+  const activityHeaderRange = resourceSched.getRange(SCHED_HEADER_ROW, 1, 1, 9);
   activityHeaderRange
-    .setValues([['Activity ID', 'Activity Description', 'Predecessor', 'Duration', 'Early Start', 'Early Finish', 'Slack', 'Critical', '% Complete', 'Status', 'Assigned Resources']])
+    .setValues([['Activity ID', 'Activity Description', 'Predecessor', 'Duration', 'Early Start', 'Early Finish', 'Slack', 'Critical', 'Assigned Resources']])
     .setFontWeight('bold')
     .setHorizontalAlignment('center')
     .setVerticalAlignment('middle')
     .setBackground('#ddebf7');
 
-  resourceSched.getRange(SCHED_FIRST_DATA_ROW, 1, activityOutput.length, 11).setValues(activityOutput);
+  resourceSched.getRange(SCHED_FIRST_DATA_ROW, 1, activityOutput.length, 9).setValues(activityOutput);
   resourceSched.getRange(SCHED_FIRST_DATA_ROW, 1, activityOutput.length, 1).setHorizontalAlignment('center');
-  resourceSched.getRange(SCHED_FIRST_DATA_ROW, 3, activityOutput.length, 8).setHorizontalAlignment('center');
-  resourceSched.getRange(SCHED_FIRST_DATA_ROW, 11, activityOutput.length, 1).setWrap(true);
+  resourceSched.getRange(SCHED_FIRST_DATA_ROW, 3, activityOutput.length, 6).setHorizontalAlignment('center');
+  resourceSched.getRange(SCHED_FIRST_DATA_ROW, 9, activityOutput.length, 1).setWrap(true);
 
   renderResourceLoadingTable_(resourceSched, schedule, resources, timeline, loadingStartRow, requiredColumns);
-  resourceSched.autoResizeColumns(1, 11);
+  resourceSched.autoResizeColumns(1, 9);
   resizeGanttCells_(resourceSched, Math.max(resources.length, activityOutput.length), timeline.length);
   resourceSched.setFrozenRows(SCHED_HEADER_ROW);
   resourceSched.setFrozenColumns(1);
