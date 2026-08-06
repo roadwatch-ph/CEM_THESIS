@@ -6,7 +6,6 @@
  *   B: Activity Description
  *   C: Predecessor (dash/blank for none, comma-separated IDs for multiple)
  *   D: Duration
- *   E: Resources (optional, comma-separated resources assigned to the activity)
  *
  * Scheduling output:
  *   A-D: copied WBS details
@@ -14,12 +13,7 @@
  *   F: Early Finish
  *   G: Late Start
  *   H: Late Finish
- *   I: Resources
- *   J onward: Gantt timeline
- *
- * Resource scheduling output:
- *   A daily resource loading table is rendered below the Gantt chart when
- *   resources are supplied in WBS column E.
+ *   I onward: Gantt timeline
  *
  * PERT output:
  *   One activity-on-node diagram tab per WBS, grouped left-to-right by dependency level.
@@ -30,7 +24,7 @@ const SCHED_TIMELINE_LABEL_ROW = 1;
 const SCHED_TIMELINE_TENS_ROW = 2;
 const SCHED_TIMELINE_DAYS_ROW = 3;
 const SCHED_FIRST_DATA_ROW = 4;
-const GANTT_FIRST_COLUMN = 10;
+const GANTT_FIRST_COLUMN = 9;
 const GANTT_CELL_SIZE_PX = 20;
 const PERT_NODE_ROW_SPACING = 7;
 const PERT_ADAPTIVE_DENSE_LEVEL_STEP = 2;
@@ -101,8 +95,6 @@ const PARALLEL_SCHEDULE_SPREADSHEET_ID_PROPERTY = 'parallelScheduleSpreadsheetId
 const PARALLEL_SCHEDULE_BATCH_TIME_LIMIT_MS = 4 * 60 * 1000;
 const PARALLEL_SCHEDULE_MAX_WBS_PER_RUN = 3;
 const PARALLEL_SCHEDULE_TRIGGER_DELAY_MS = 1000;
-const RESOURCE_SCHEDULE_HEADER_GAP_ROWS = 2;
-const RESOURCE_SCHEDULE_HEADER_ROW_COUNT = 2;
 
 function generateSchedule() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -323,7 +315,7 @@ function generateScheduleForWbsSheet_(ss, wbs) {
     return;
   }
 
-  const rows = wbs.getRange(2, 1, lastRow - 1, Math.max(5, wbs.getLastColumn())).getValues();
+  const rows = wbs.getRange(2, 1, lastRow - 1, 4).getValues();
   const activities = parseAndValidateWbs_(rows, wbs.getName());
 
   if (activities.length === 0) {
@@ -501,7 +493,6 @@ function parseAndValidateWbs_(rows, wbsSheetName) {
     const name = String(row[1] || '').trim();
     const predecessors = parsePredecessors_(row[2]);
     const duration = Number(row[3]);
-    const resources = parseResources_(row[4]);
 
     if (!id) errors.push(`${wbsSheetName} row ${sheetRow}: missing Activity ID.`);
     if (id && idSet.has(canonicalId)) errors.push(`${wbsSheetName} row ${sheetRow}: duplicate Activity ID "${id}".`);
@@ -514,7 +505,7 @@ function parseAndValidateWbs_(rows, wbsSheetName) {
       idSet.add(canonicalId);
       if (!idByCanonicalId.has(canonicalId)) idByCanonicalId.set(canonicalId, id);
     }
-    activities.push({ id, name, predecessors, duration, resources, sourceRow: sheetRow });
+    activities.push({ id, name, predecessors, duration, sourceRow: sheetRow });
   });
 
   activities.forEach(activity => {
@@ -539,20 +530,6 @@ function parseAndValidateWbs_(rows, wbsSheetName) {
   }
 
   return activities;
-}
-
-function parseResources_(value) {
-  if (value === null || value === undefined) return [];
-
-  const rawValue = String(value).trim();
-  if (!rawValue || rawValue === '-') return [];
-
-  const resources = rawValue
-    .split(',')
-    .map(resource => resource.trim())
-    .filter(resource => resource);
-
-  return Array.from(new Set(resources));
 }
 
 function buildScheduleModel_(activities) {
@@ -675,7 +652,6 @@ function computeSchedule_(orderedActivities) {
       name: activity.name,
       predecessors: activity.predecessors,
       duration: activity.duration,
-      resources: activity.resources || [],
       earlyStart,
       earlyFinish,
       lateStart: null,
@@ -721,7 +697,6 @@ function renderSchedule_(sched, schedule) {
     activity.earlyFinish,
     activity.lateStart,
     activity.lateFinish,
-    activity.resources.length ? activity.resources.join(', ') : '-',
   ]);
 
   const maxFinish = Math.max(...schedule.map(activity => activity.lateFinish));
@@ -731,12 +706,11 @@ function renderSchedule_(sched, schedule) {
 
   renderScheduleTitle_(sched);
 
-  const tableHeaderRange = sched.getRange(SCHED_HEADER_ROW, 1, 1, 9);
-  tableHeaderRange.setValues([['Activity ID', 'Activity Description', 'Predecessor', 'Duration', 'Early Start', 'Early Finish', 'Late Start', 'Late Finish', 'Resources']]);
-  sched.getRange(SCHED_FIRST_DATA_ROW, 1, output.length, 9).setValues(output);
+  const tableHeaderRange = sched.getRange(SCHED_HEADER_ROW, 1, 1, 8);
+  tableHeaderRange.setValues([['Activity ID', 'Activity Description', 'Predecessor', 'Duration', 'Early Start', 'Early Finish', 'Late Start', 'Late Finish']]);
+  sched.getRange(SCHED_FIRST_DATA_ROW, 1, output.length, 8).setValues(output);
   sched.getRange(SCHED_FIRST_DATA_ROW, 1, output.length, 1).setHorizontalAlignment('center');
   sched.getRange(SCHED_FIRST_DATA_ROW, 3, output.length, 6).setHorizontalAlignment('center');
-  sched.getRange(SCHED_FIRST_DATA_ROW, 9, output.length, 1).setWrap(true);
   sched.autoResizeColumn(2);
 
   renderTimelineHeaders_(sched, timeline);
@@ -762,74 +736,8 @@ function renderSchedule_(sched, schedule) {
     .setVerticalAlignment('middle');
   styleSchedule_(sched, output.length, timeline.length);
   resizeGanttCells_(sched, output.length, timeline.length);
-  renderResourceSchedule_(sched, schedule, timeline);
   sched.setFrozenRows(SCHED_TIMELINE_DAYS_ROW);
   sched.setFrozenColumns(GANTT_FIRST_COLUMN - 1);
-}
-
-function renderResourceSchedule_(sched, schedule, timeline) {
-  const resources = getScheduledResources_(schedule);
-  if (resources.length === 0 || timeline.length === 0) return;
-
-  const startRow = SCHED_FIRST_DATA_ROW + schedule.length + RESOURCE_SCHEDULE_HEADER_GAP_ROWS;
-  ensureSheetSize_(sched, startRow + RESOURCE_SCHEDULE_HEADER_ROW_COUNT + resources.length - 1, timeline.length + GANTT_FIRST_COLUMN - 1);
-  const titleRange = sched.getRange(startRow, 1, 1, timeline.length + GANTT_FIRST_COLUMN - 1);
-  titleRange
-    .mergeAcross()
-    .setValue('RESOURCE SCHEDULE / DAILY LOADING')
-    .setFontWeight('bold')
-    .setHorizontalAlignment('center')
-    .setBackground('#1f4e79')
-    .setFontColor('#ffffff');
-
-  sched.getRange(startRow + 1, 1, 1, 1)
-    .setValue('Resource')
-    .setFontWeight('bold')
-    .setHorizontalAlignment('center')
-    .setBackground('#ddebf7');
-  sched.getRange(startRow + 1, GANTT_FIRST_COLUMN, 1, timeline.length)
-    .setValues([timeline])
-    .setFontWeight('bold')
-    .setHorizontalAlignment('center')
-    .setBackground('#ddebf7');
-
-  const resourceRows = resources.map(resource => {
-    return [resource].concat(timeline.map(day => countActiveResourceAssignments_(schedule, resource, day)));
-  });
-
-  sched.getRange(startRow + RESOURCE_SCHEDULE_HEADER_ROW_COUNT, 1, resourceRows.length, 1)
-    .setValues(resourceRows.map(row => [row[0]]))
-    .setFontWeight('bold');
-  sched.getRange(startRow + RESOURCE_SCHEDULE_HEADER_ROW_COUNT, GANTT_FIRST_COLUMN, resourceRows.length, timeline.length)
-    .setValues(resourceRows.map(row => row.slice(1)))
-    .setHorizontalAlignment('center')
-    .setBackgrounds(resourceRows.map(row => row.slice(1).map(value => value > 0 ? '#fff2cc' : null)));
-}
-
-function getScheduledResources_(schedule) {
-  const resources = [];
-  const seen = new Set();
-
-  schedule.forEach(activity => {
-    (activity.resources || []).forEach(resource => {
-      const key = resource.toLowerCase();
-      if (seen.has(key)) return;
-      seen.add(key);
-      resources.push(resource);
-    });
-  });
-
-  return resources.sort((a, b) => a.localeCompare(b));
-}
-
-function countActiveResourceAssignments_(schedule, resource, day) {
-  const resourceKey = resource.toLowerCase();
-
-  return schedule.reduce((count, activity) => {
-    const isAssigned = (activity.resources || []).some(activityResource => activityResource.toLowerCase() === resourceKey);
-    const isActive = day > activity.earlyStart && day <= activity.earlyFinish;
-    return isAssigned && isActive ? count + 1 : count;
-  }, 0);
 }
 
 function renderPertDiagram_(pert, schedule) {
@@ -3117,15 +3025,15 @@ function renderTensHeaders_(sched, timeline) {
 
 function styleSchedule_(sched, activityCount, timelineLength) {
   const styledRowCount = activityCount + SCHED_FIRST_DATA_ROW - SCHED_HEADER_ROW;
-  const tableRange = sched.getRange(SCHED_HEADER_ROW, 1, styledRowCount, 9);
+  const tableRange = sched.getRange(SCHED_HEADER_ROW, 1, styledRowCount, 8);
   const timelineRange = sched.getRange(SCHED_TIMELINE_LABEL_ROW, GANTT_FIRST_COLUMN, activityCount + SCHED_FIRST_DATA_ROW - 1, timelineLength);
 
   tableRange.setBorder(true, true, true, true, true, true, '#000000', SpreadsheetApp.BorderStyle.SOLID);
   timelineRange.setBorder(true, true, true, true, true, true, '#000000', SpreadsheetApp.BorderStyle.SOLID);
   sched.getRange(SCHED_FIRST_DATA_ROW, GANTT_FIRST_COLUMN, activityCount, timelineLength)
     .setBorder(true, true, true, true, true, true, '#000000', SpreadsheetApp.BorderStyle.SOLID);
-  sched.getRange(SCHED_HEADER_ROW, 1, 1, 9).setBackground('#ffffff');
-  sched.getRange(SCHED_FIRST_DATA_ROW, 1, activityCount, 9).setBackground('#ffffff');
+  sched.getRange(SCHED_HEADER_ROW, 1, 1, 8).setBackground('#ffffff');
+  sched.getRange(SCHED_FIRST_DATA_ROW, 1, activityCount, 8).setBackground('#ffffff');
 }
 
 
@@ -3173,7 +3081,7 @@ function isWbsActivityDataEdit_(range) {
   const firstEditedColumn = range.getColumn();
   const lastEditedColumn = firstEditedColumn + range.getNumColumns() - 1;
 
-  return lastEditedRow >= 2 && firstEditedColumn <= 5 && lastEditedColumn >= 1;
+  return lastEditedRow >= 2 && firstEditedColumn <= 4 && lastEditedColumn >= 1;
 }
 
 /**
