@@ -53,6 +53,10 @@ const PERT_ORTHOGONAL_ROUTE_ROW_CLEARANCE_PX = 18;
 const PERT_ORTHOGONAL_ROUTE_ROW_STEP_PX = PERT_CELL_HEIGHT_PX;
 const PERT_MAX_ORTHOGONAL_ROUTE_ROW_ATTEMPTS = 12;
 const PERT_ARROW_BOX_CLEARANCE_PX = 8;
+const PERT_ARROW_ROUTE_PROXIMITY_SAMPLE_STEP_PX = 24;
+const PERT_ARROW_ROUTE_NODE_PROXIMITY_WEIGHT = 0.15;
+const PERT_ARROW_ROUTE_BEND_PENALTY_PX = 90;
+const PERT_ARROW_ROUTE_CROSSING_PENALTY_PX = 600;
 const PERT_MAX_ARROW_BOX_AVOIDANCE_PASSES = 12;
 const PERT_MAX_ARROW_CROSSING_AVOIDANCE_PASSES = 12;
 const PERT_LONG_SPAN_SOURCE_DROP_ROWS = PERT_NODE_HEIGHT + 1;
@@ -1982,7 +1986,7 @@ function getPertPreferredPixelRoutePoints_(startPoint, endPoint, successorIndex,
     .filter(route => canUsePertPixelPolylineRoute_(route, positions, sourceId, targetId));
 
   if (clearRoutes.length > 0) {
-    return getShortestPertPixelRoute_(clearRoutes);
+    return getCleanestPertPixelRoute_(clearRoutes, positions, sourceId, targetId);
   }
 
   // If every detour would still collide, keep a single uninterrupted direct path
@@ -1990,17 +1994,84 @@ function getPertPreferredPixelRoutePoints_(startPoint, endPoint, successorIndex,
   return [startPoint, endPoint];
 }
 
-function getShortestPertPixelRoute_(routes) {
-  return routes.reduce((shortestRoute, route) => {
-    if (!shortestRoute) return route;
+function getCleanestPertPixelRoute_(routes, positions, sourceId, targetId) {
+  return routes.reduce((cleanestRoute, route) => {
+    if (!cleanestRoute) return route;
 
-    const routeLength = getPertPixelRouteLength_(route);
-    const shortestRouteLength = getPertPixelRouteLength_(shortestRoute);
-    if (routeLength < shortestRouteLength) return route;
-    if (routeLength > shortestRouteLength) return shortestRoute;
+    const routeScore = getPertPixelRouteCleanlinessScore_(route, positions, sourceId, targetId);
+    const cleanestRouteScore = getPertPixelRouteCleanlinessScore_(cleanestRoute, positions, sourceId, targetId);
+    if (routeScore < cleanestRouteScore) return route;
+    if (routeScore > cleanestRouteScore) return cleanestRoute;
 
-    return route.length < shortestRoute.length ? route : shortestRoute;
+    return route.length < cleanestRoute.length ? route : cleanestRoute;
   }, null);
+}
+
+function getPertPixelRouteCleanlinessScore_(points, positions, sourceId, targetId) {
+  return getPertPixelRouteLength_(points) +
+    getPertPixelRouteBendCount_(points) * PERT_ARROW_ROUTE_BEND_PENALTY_PX +
+    getPertPixelRouteNodeProximityScore_(points, positions, sourceId, targetId) * PERT_ARROW_ROUTE_NODE_PROXIMITY_WEIGHT +
+    getPertPixelRouteSelfCrossingCount_(points) * PERT_ARROW_ROUTE_CROSSING_PENALTY_PX;
+}
+
+function getPertPixelRouteBendCount_(points) {
+  return points.reduce((bendCount, point, index) => {
+    if (index === 0 || index === points.length - 1) return bendCount;
+    return arePertPixelPointsCollinear_(points[index - 1], point, points[index + 1]) ? bendCount : bendCount + 1;
+  }, 0);
+}
+
+function getPertPixelRouteNodeProximityScore_(points, positions, sourceId, targetId) {
+  if (!positions) return 0;
+
+  let proximityScore = 0;
+  positions.forEach((position, id) => {
+    if (id === sourceId || id === targetId) return;
+
+    const box = expandPertPixelBox_(getPertNodePixelBox_(position), PERT_ARROW_BOX_CLEARANCE_PX);
+    for (let index = 1; index < points.length; index++) {
+      proximityScore += getPertLineBoxProximityScore_(points[index - 1], points[index], box);
+    }
+  });
+
+  return proximityScore;
+}
+
+function getPertLineBoxProximityScore_(startPoint, endPoint, box) {
+  const segmentLength = Math.max(1, Math.hypot(endPoint.x - startPoint.x, endPoint.y - startPoint.y));
+  const sampleCount = Math.max(1, Math.ceil(segmentLength / PERT_ARROW_ROUTE_PROXIMITY_SAMPLE_STEP_PX));
+  let score = 0;
+
+  for (let sampleIndex = 0; sampleIndex <= sampleCount; sampleIndex++) {
+    const t = sampleIndex / sampleCount;
+    const samplePoint = {
+      x: startPoint.x + (endPoint.x - startPoint.x) * t,
+      y: startPoint.y + (endPoint.y - startPoint.y) * t,
+    };
+    const distance = getPertPointBoxDistance_(samplePoint, box);
+    score += 1 / Math.max(1, distance);
+  }
+
+  return score * segmentLength;
+}
+
+function getPertPointBoxDistance_(point, box) {
+  const dx = Math.max(box.left - point.x, 0, point.x - box.right);
+  const dy = Math.max(box.top - point.y, 0, point.y - box.bottom);
+  return Math.hypot(dx, dy);
+}
+
+function getPertPixelRouteSelfCrossingCount_(points) {
+  let crossingCount = 0;
+
+  for (let firstIndex = 1; firstIndex < points.length; firstIndex++) {
+    for (let secondIndex = firstIndex + 2; secondIndex < points.length; secondIndex++) {
+      if (firstIndex === 1 && secondIndex === points.length - 1) continue;
+      if (doPertLineSegmentsIntersect_(points[firstIndex - 1], points[firstIndex], points[secondIndex - 1], points[secondIndex])) crossingCount++;
+    }
+  }
+
+  return crossingCount;
 }
 
 function getPertPixelRouteLength_(points) {
@@ -2466,18 +2537,22 @@ function getPertArrowPixelConnectionPoints_(sourcePosition, targetPosition, succ
   const targetBox = getPertNodePixelBox_(targetPosition);
   const sourceCenter = getPertNodePixelCenter_(sourceBox);
   const targetCenter = getPertNodePixelCenter_(targetBox);
+  const sourceRouteIndex = successorIndex || 0;
+  const sourceRouteCount = Math.max(1, successorCount || 1);
+  const targetRouteIndex = incomingIndex || 0;
+  const targetRouteCount = Math.max(1, incomingCount || 1);
 
-  // Keep PERT dependencies flowing left-to-right like the requested reference:
-  // arrows leave the middle of the source node side, fan out as straight
-  // diagonals when needed, then enter the middle of the target node side.
+  // Keep PERT dependencies flowing left-to-right like the requested reference,
+  // but distribute ports along node edges so fan-in/fan-out arrows do not pile
+  // up on the exact same center point.
   return targetCenter.x >= sourceCenter.x
     ? {
-      start: getPertPixelPointOnVerticalEdgeCenter_(sourceBox, 'right'),
-      end: getPertPixelPointOnVerticalEdgeCenter_(targetBox, 'left'),
+      start: getPertPixelPointOnVerticalEdge_(sourceBox, 'right', sourceRouteIndex, sourceRouteCount),
+      end: getPertPixelPointOnVerticalEdge_(targetBox, 'left', targetRouteIndex, targetRouteCount),
     }
     : {
-      start: getPertPixelPointOnVerticalEdgeCenter_(sourceBox, 'left'),
-      end: getPertPixelPointOnVerticalEdgeCenter_(targetBox, 'right'),
+      start: getPertPixelPointOnVerticalEdge_(sourceBox, 'left', sourceRouteIndex, sourceRouteCount),
+      end: getPertPixelPointOnVerticalEdge_(targetBox, 'right', targetRouteIndex, targetRouteCount),
     };
 }
 
