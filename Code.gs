@@ -14,8 +14,10 @@
  *   F: Early Finish
  *   G: Late Start
  *   H: Late Finish
- *   I: Resources
- *   J onward: Gantt timeline
+ *   I: Slack
+ *   J: Critical
+ *   K: Resources
+ *   L onward: MS Project-style Gantt timeline
  *
  * Resource scheduling output:
  *   One resource scheduling tab per WBS, linked to the schedule dates and
@@ -30,7 +32,7 @@ const SCHED_TIMELINE_LABEL_ROW = 1;
 const SCHED_TIMELINE_TENS_ROW = 2;
 const SCHED_TIMELINE_DAYS_ROW = 3;
 const SCHED_FIRST_DATA_ROW = 4;
-const GANTT_FIRST_COLUMN = 10;
+const GANTT_FIRST_COLUMN = 12;
 const GANTT_CELL_SIZE_PX = 20;
 const PERT_NODE_ROW_SPACING = 7;
 const PERT_ADAPTIVE_DENSE_LEVEL_STEP = 2;
@@ -581,7 +583,6 @@ function parseAndValidateWbs_(rows, wbsSheetName) {
     if (!Number.isFinite(duration) || duration <= 0) {
       errors.push(`${wbsSheetName} row ${sheetRow}: Duration must be a positive number.`);
     }
-
     if (id) {
       idSet.add(canonicalId);
       if (!idByCanonicalId.has(canonicalId)) idByCanonicalId.set(canonicalId, id);
@@ -793,6 +794,8 @@ function renderSchedule_(sched, schedule) {
     activity.earlyFinish,
     activity.lateStart,
     activity.lateFinish,
+    activity.slack,
+    activity.isCritical ? 'Yes' : 'No',
     activity.resources.length ? activity.resources.join(', ') : '-',
   ]);
 
@@ -803,12 +806,12 @@ function renderSchedule_(sched, schedule) {
 
   renderScheduleTitle_(sched);
 
-  const tableHeaderRange = sched.getRange(SCHED_HEADER_ROW, 1, 1, 9);
-  tableHeaderRange.setValues([['Activity ID', 'Activity Description', 'Predecessor', 'Duration', 'Early Start', 'Early Finish', 'Late Start', 'Late Finish', 'Resources']]);
-  sched.getRange(SCHED_FIRST_DATA_ROW, 1, output.length, 9).setValues(output);
+  const tableHeaderRange = sched.getRange(SCHED_HEADER_ROW, 1, 1, 11);
+  tableHeaderRange.setValues([['Activity ID', 'Activity Description', 'Predecessor', 'Duration', 'Early Start', 'Early Finish', 'Late Start', 'Late Finish', 'Slack', 'Critical', 'Resources']]);
+  sched.getRange(SCHED_FIRST_DATA_ROW, 1, output.length, 11).setValues(output);
   sched.getRange(SCHED_FIRST_DATA_ROW, 1, output.length, 1).setHorizontalAlignment('center');
-  sched.getRange(SCHED_FIRST_DATA_ROW, 3, output.length, 6).setHorizontalAlignment('center');
-  sched.getRange(SCHED_FIRST_DATA_ROW, 9, output.length, 1).setWrap(true);
+  sched.getRange(SCHED_FIRST_DATA_ROW, 3, output.length, 8).setHorizontalAlignment('center');
+  sched.getRange(SCHED_FIRST_DATA_ROW, 11, output.length, 1).setWrap(true);
   sched.autoResizeColumn(2);
 
   renderTimelineHeaders_(sched, timeline);
@@ -818,7 +821,8 @@ function renderSchedule_(sched, schedule) {
     .setVerticalAlignment('middle');
 
   const backgrounds = schedule.map(activity => timeline.map(day => {
-    return day > activity.earlyStart && day <= activity.earlyFinish ? '#4CAF50' : null;
+    if (!(day > activity.earlyStart && day <= activity.earlyFinish)) return null;
+    return activity.isCritical ? '#c00000' : '#4CAF50';
   }));
   const ganttValues = schedule.map(activity => timeline.map(day => {
     const durationLabelDay = activity.earlyStart + Math.ceil(activity.duration / 2);
@@ -832,10 +836,16 @@ function renderSchedule_(sched, schedule) {
     .setFontWeights(ganttFontWeights)
     .setHorizontalAlignment('center')
     .setVerticalAlignment('middle');
+  applyScheduleCriticalFormatting_(sched, schedule);
   styleSchedule_(sched, output.length, timeline.length);
   resizeGanttCells_(sched, output.length, timeline.length);
   sched.setFrozenRows(SCHED_TIMELINE_DAYS_ROW);
   sched.setFrozenColumns(GANTT_FIRST_COLUMN - 1);
+}
+
+function applyScheduleCriticalFormatting_(sched, schedule) {
+  const criticalBackgrounds = schedule.map(activity => [activity.isCritical ? '#f4cccc' : null]);
+  sched.getRange(SCHED_FIRST_DATA_ROW, 10, schedule.length, 1).setBackgrounds(criticalBackgrounds);
 }
 
 function renderResourceScheduleTab_(resourceSched, schedule) {
@@ -853,6 +863,8 @@ function renderResourceScheduleTab_(resourceSched, schedule) {
     activity.duration,
     activity.earlyStart,
     activity.earlyFinish,
+    activity.slack,
+    activity.isCritical ? 'Yes' : 'No',
     activity.resources.length ? activity.resources.join(', ') : '-',
   ]);
   const loadingStartRow = SCHED_FIRST_DATA_ROW + activityOutput.length + RESOURCE_SCHEDULE_HEADER_GAP_ROWS;
@@ -872,21 +884,21 @@ function renderResourceScheduleTab_(resourceSched, schedule) {
     .setBackground('#1f4e79')
     .setFontColor('#ffffff');
 
-  const activityHeaderRange = resourceSched.getRange(SCHED_HEADER_ROW, 1, 1, 7);
+  const activityHeaderRange = resourceSched.getRange(SCHED_HEADER_ROW, 1, 1, 9);
   activityHeaderRange
-    .setValues([['Activity ID', 'Activity Description', 'Predecessor', 'Duration', 'Early Start', 'Early Finish', 'Assigned Resources']])
+    .setValues([['Activity ID', 'Activity Description', 'Predecessor', 'Duration', 'Early Start', 'Early Finish', 'Slack', 'Critical', 'Assigned Resources']])
     .setFontWeight('bold')
     .setHorizontalAlignment('center')
     .setVerticalAlignment('middle')
     .setBackground('#ddebf7');
 
-  resourceSched.getRange(SCHED_FIRST_DATA_ROW, 1, activityOutput.length, 7).setValues(activityOutput);
+  resourceSched.getRange(SCHED_FIRST_DATA_ROW, 1, activityOutput.length, 9).setValues(activityOutput);
   resourceSched.getRange(SCHED_FIRST_DATA_ROW, 1, activityOutput.length, 1).setHorizontalAlignment('center');
-  resourceSched.getRange(SCHED_FIRST_DATA_ROW, 3, activityOutput.length, 4).setHorizontalAlignment('center');
-  resourceSched.getRange(SCHED_FIRST_DATA_ROW, 7, activityOutput.length, 1).setWrap(true);
+  resourceSched.getRange(SCHED_FIRST_DATA_ROW, 3, activityOutput.length, 6).setHorizontalAlignment('center');
+  resourceSched.getRange(SCHED_FIRST_DATA_ROW, 9, activityOutput.length, 1).setWrap(true);
 
   renderResourceLoadingTable_(resourceSched, schedule, resources, timeline, loadingStartRow, requiredColumns);
-  resourceSched.autoResizeColumns(1, 7);
+  resourceSched.autoResizeColumns(1, 9);
   resizeGanttCells_(resourceSched, Math.max(resources.length, activityOutput.length), timeline.length);
   resourceSched.setFrozenRows(SCHED_HEADER_ROW);
   resourceSched.setFrozenColumns(1);
