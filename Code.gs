@@ -18,8 +18,8 @@
  *   J onward: Gantt timeline
  *
  * Resource scheduling output:
- *   A daily resource loading table is rendered below the Gantt chart when
- *   resources are supplied in WBS column E.
+ *   One resource scheduling tab per WBS, linked to the schedule dates and
+ *   populated when resources are supplied in WBS column E.
  *
  * PERT output:
  *   One activity-on-node diagram tab per WBS, grouped left-to-right by dependency level.
@@ -86,12 +86,14 @@ const PERT_WEB_ARROW_STROKE_WIDTH = 1;
 const DEFAULT_WBS_SHEET_NAME = 'WBS';
 const DEFAULT_SCHED_SHEET_NAME = 'Scheduling';
 const DEFAULT_PERT_SHEET_NAME = 'PERT Diagram';
+const DEFAULT_RESOURCE_SHEET_NAME = 'Resource Scheduling';
 const PERT_START_MILESTONE_ID = 'START';
 const PERT_FINISH_MILESTONE_ID = 'FINISH';
 const WBS_SHEET_NAME_PATTERN = /(^|\b)WBS($|\b)/i;
 const WBS_SHEET_NAME_REPLACEMENT_PATTERN = /WBS/ig;
 const SCHEDULING_SHEET_ID_PROPERTY_PREFIX = 'schedulingSheetIdForWbs_';
 const PERT_SHEET_ID_PROPERTY_PREFIX = 'pertSheetIdForWbs_';
+const RESOURCE_SHEET_ID_PROPERTY_PREFIX = 'resourceSheetIdForWbs_';
 const MAX_SHEET_NAME_LENGTH = 100;
 const SCHEDULE_GENERATION_LOCK_TIMEOUT_MS = 25000;
 const SCHEDULE_GENERATION_BUSY_MESSAGE = 'Schedule generation is already running. Please wait a moment, then try again.';
@@ -315,11 +317,13 @@ function runWithScheduleGenerationLock_(callback, options) {
 function generateScheduleForWbsSheet_(ss, wbs) {
   const sched = getOrCreateSchedulingSheet_(ss, wbs);
   const pert = getOrCreatePertSheet_(ss, wbs);
+  const resourceSched = getOrCreateResourceSchedulingSheet_(ss, wbs);
   const lastRow = wbs.getLastRow();
 
   if (lastRow < 2) {
     clearSchedule_(sched);
     clearPertDiagram_(pert);
+    clearResourceSchedule_(resourceSched);
     return;
   }
 
@@ -329,12 +333,14 @@ function generateScheduleForWbsSheet_(ss, wbs) {
   if (activities.length === 0) {
     clearSchedule_(sched);
     clearPertDiagram_(pert);
+    clearResourceSchedule_(resourceSched);
     return;
   }
 
   const scheduleModel = buildScheduleModel_(activities);
 
   renderSchedule_(sched, scheduleModel.schedule);
+  renderResourceScheduleTab_(resourceSched, scheduleModel.schedule);
   renderPertDiagram_(pert, scheduleModel.schedule);
 }
 
@@ -344,7 +350,7 @@ function getWbsSheets_(ss) {
 
 function isWbsSheetName_(sheetName) {
   WBS_SHEET_NAME_PATTERN.lastIndex = 0;
-  return WBS_SHEET_NAME_PATTERN.test(sheetName) && !isSchedulingSheetName_(sheetName) && !isPertSheetName_(sheetName);
+  return WBS_SHEET_NAME_PATTERN.test(sheetName) && !isSchedulingSheetName_(sheetName) && !isPertSheetName_(sheetName) && !isResourceSchedulingSheetName_(sheetName);
 }
 
 function isSchedulingSheetName_(sheetName) {
@@ -353,6 +359,10 @@ function isSchedulingSheetName_(sheetName) {
 
 function isPertSheetName_(sheetName) {
   return /PERT/i.test(sheetName);
+}
+
+function isResourceSchedulingSheetName_(sheetName) {
+  return /Resource Scheduling|Resources/i.test(sheetName);
 }
 
 function getOrCreateSchedulingSheet_(ss, wbs) {
@@ -375,6 +385,68 @@ function getOrCreatePertSheet_(ss, wbs) {
   const pert = existingSheet || ss.insertSheet(pertSheetName, wbs.getIndex() + 1);
   savePertSheetMapping_(wbs, pert);
   return pert;
+}
+
+function getOrCreateResourceSchedulingSheet_(ss, wbs) {
+  const existingMappedSheet = getMappedResourceSchedulingSheet_(ss, wbs);
+  if (existingMappedSheet) return existingMappedSheet;
+
+  const resourceSheetName = getAvailableResourceSchedulingSheetName_(ss, wbs);
+  const existingSheet = ss.getSheetByName(resourceSheetName);
+  const resourceSched = existingSheet || ss.insertSheet(resourceSheetName, wbs.getIndex() + 2);
+  saveResourceSchedulingSheetMapping_(wbs, resourceSched);
+  return resourceSched;
+}
+
+function getMappedResourceSchedulingSheet_(ss, wbs) {
+  const sheetId = PropertiesService.getDocumentProperties().getProperty(getResourceSchedulingSheetPropertyKey_(wbs));
+  if (!sheetId) return null;
+
+  const resourceSched = ss.getSheetById(Number(sheetId));
+  return resourceSched && !isWbsSheetName_(resourceSched.getName()) ? resourceSched : null;
+}
+
+function saveResourceSchedulingSheetMapping_(wbs, resourceSched) {
+  PropertiesService.getDocumentProperties().setProperty(getResourceSchedulingSheetPropertyKey_(wbs), String(resourceSched.getSheetId()));
+}
+
+function getResourceSchedulingSheetPropertyKey_(wbs) {
+  return `${RESOURCE_SHEET_ID_PROPERTY_PREFIX}${wbs.getSheetId()}`;
+}
+
+function getAvailableResourceSchedulingSheetName_(ss, wbs) {
+  const baseName = getResourceSchedulingSheetName_(wbs.getName());
+  const baseSheet = ss.getSheetByName(baseName);
+  if (!baseSheet || !isResourceSchedulingSheetMappedToOtherWbs_(baseSheet, wbs)) return baseName;
+
+  for (let counter = 2; counter < 1000; counter++) {
+    const suffix = ` ${counter}`;
+    const candidate = `${baseName.slice(0, MAX_SHEET_NAME_LENGTH - suffix.length)}${suffix}`;
+    const candidateSheet = ss.getSheetByName(candidate);
+    if (!candidateSheet || !isResourceSchedulingSheetMappedToOtherWbs_(candidateSheet, wbs)) return candidate;
+  }
+
+  throw new Error(`Could not create a unique Resource Scheduling tab for ${wbs.getName()}.`);
+}
+
+function isResourceSchedulingSheetMappedToOtherWbs_(resourceSched, wbs) {
+  const currentPropertyKey = getResourceSchedulingSheetPropertyKey_(wbs);
+  const currentResourceSheetId = String(resourceSched.getSheetId());
+  const properties = PropertiesService.getDocumentProperties().getProperties();
+
+  return Object.keys(properties).some(key => {
+    return key !== currentPropertyKey &&
+      key.indexOf(RESOURCE_SHEET_ID_PROPERTY_PREFIX) === 0 &&
+      properties[key] === currentResourceSheetId;
+  });
+}
+
+function getResourceSchedulingSheetName_(wbsSheetName) {
+  if (wbsSheetName === DEFAULT_WBS_SHEET_NAME) return DEFAULT_RESOURCE_SHEET_NAME;
+
+  WBS_SHEET_NAME_REPLACEMENT_PATTERN.lastIndex = 0;
+  const resourceSheetName = wbsSheetName.replace(WBS_SHEET_NAME_REPLACEMENT_PATTERN, 'Resource Scheduling').trim();
+  return truncateSheetName_(resourceSheetName || DEFAULT_RESOURCE_SHEET_NAME);
 }
 
 function getMappedPertSheet_(ss, wbs) {
@@ -762,45 +834,100 @@ function renderSchedule_(sched, schedule) {
     .setVerticalAlignment('middle');
   styleSchedule_(sched, output.length, timeline.length);
   resizeGanttCells_(sched, output.length, timeline.length);
-  renderResourceSchedule_(sched, schedule, timeline);
   sched.setFrozenRows(SCHED_TIMELINE_DAYS_ROW);
   sched.setFrozenColumns(GANTT_FIRST_COLUMN - 1);
 }
 
-function renderResourceSchedule_(sched, schedule, timeline) {
-  const resources = getScheduledResources_(schedule);
-  if (resources.length === 0 || timeline.length === 0) return;
+function renderResourceScheduleTab_(resourceSched, schedule) {
+  clearResourceSchedule_(resourceSched);
 
-  const startRow = SCHED_FIRST_DATA_ROW + schedule.length + RESOURCE_SCHEDULE_HEADER_GAP_ROWS;
-  ensureSheetSize_(sched, startRow + RESOURCE_SCHEDULE_HEADER_ROW_COUNT + resources.length - 1, timeline.length + GANTT_FIRST_COLUMN - 1);
-  const titleRange = sched.getRange(startRow, 1, 1, timeline.length + GANTT_FIRST_COLUMN - 1);
+  if (schedule.length === 0) return;
+
+  const maxFinish = Math.max(...schedule.map(activity => activity.lateFinish));
+  const timeline = Array.from({ length: maxFinish }, (_, index) => index + 1);
+  const resources = getScheduledResources_(schedule);
+  const activityOutput = schedule.map(activity => [
+    activity.id,
+    activity.name,
+    activity.predecessors.length ? activity.predecessors.join(',') : '-',
+    activity.duration,
+    activity.earlyStart,
+    activity.earlyFinish,
+    activity.resources.length ? activity.resources.join(', ') : '-',
+  ]);
+  const loadingStartRow = SCHED_FIRST_DATA_ROW + activityOutput.length + RESOURCE_SCHEDULE_HEADER_GAP_ROWS;
+  const requiredRows = loadingStartRow + RESOURCE_SCHEDULE_HEADER_ROW_COUNT + Math.max(resources.length, 1) - 1;
+  const requiredColumns = timeline.length + GANTT_FIRST_COLUMN - 1;
+
+  ensureSheetSize_(resourceSched, requiredRows, requiredColumns);
+  trimExtraScheduleColumns_(resourceSched, requiredColumns);
+
+  const titleRange = resourceSched.getRange(SCHED_TITLE_ROW, 1, 1, requiredColumns);
   titleRange
     .mergeAcross()
-    .setValue('RESOURCE SCHEDULE / DAILY LOADING')
+    .setValue('RESOURCE SCHEDULING')
+    .setFontWeight('bold')
+    .setFontSize(12)
+    .setHorizontalAlignment('center')
+    .setBackground('#1f4e79')
+    .setFontColor('#ffffff');
+
+  const activityHeaderRange = resourceSched.getRange(SCHED_HEADER_ROW, 1, 1, 7);
+  activityHeaderRange
+    .setValues([['Activity ID', 'Activity Description', 'Predecessor', 'Duration', 'Early Start', 'Early Finish', 'Assigned Resources']])
+    .setFontWeight('bold')
+    .setHorizontalAlignment('center')
+    .setVerticalAlignment('middle')
+    .setBackground('#ddebf7');
+
+  resourceSched.getRange(SCHED_FIRST_DATA_ROW, 1, activityOutput.length, 7).setValues(activityOutput);
+  resourceSched.getRange(SCHED_FIRST_DATA_ROW, 1, activityOutput.length, 1).setHorizontalAlignment('center');
+  resourceSched.getRange(SCHED_FIRST_DATA_ROW, 3, activityOutput.length, 4).setHorizontalAlignment('center');
+  resourceSched.getRange(SCHED_FIRST_DATA_ROW, 7, activityOutput.length, 1).setWrap(true);
+
+  renderResourceLoadingTable_(resourceSched, schedule, resources, timeline, loadingStartRow, requiredColumns);
+  resourceSched.autoResizeColumns(1, 7);
+  resizeGanttCells_(resourceSched, Math.max(resources.length, activityOutput.length), timeline.length);
+  resourceSched.setFrozenRows(SCHED_HEADER_ROW);
+  resourceSched.setFrozenColumns(1);
+}
+
+function renderResourceLoadingTable_(resourceSched, schedule, resources, timeline, startRow, requiredColumns) {
+  const titleRange = resourceSched.getRange(startRow, 1, 1, requiredColumns);
+  titleRange
+    .mergeAcross()
+    .setValue('DAILY RESOURCE LOADING CONNECTED TO SCHEDULING DAYS')
     .setFontWeight('bold')
     .setHorizontalAlignment('center')
     .setBackground('#1f4e79')
     .setFontColor('#ffffff');
 
-  sched.getRange(startRow + 1, 1, 1, 1)
-    .setValue('Resource')
+  resourceSched.getRange(startRow + 1, 1, 1, 1)
+    .setValue('Resource Name')
     .setFontWeight('bold')
     .setHorizontalAlignment('center')
     .setBackground('#ddebf7');
-  sched.getRange(startRow + 1, GANTT_FIRST_COLUMN, 1, timeline.length)
+  resourceSched.getRange(startRow + 1, GANTT_FIRST_COLUMN, 1, timeline.length)
     .setValues([timeline])
     .setFontWeight('bold')
     .setHorizontalAlignment('center')
     .setBackground('#ddebf7');
 
+  if (resources.length === 0) {
+    resourceSched.getRange(startRow + RESOURCE_SCHEDULE_HEADER_ROW_COUNT, 1)
+      .setValue('No resources entered in WBS column E.')
+      .setFontStyle('italic');
+    return;
+  }
+
   const resourceRows = resources.map(resource => {
     return [resource].concat(timeline.map(day => countActiveResourceAssignments_(schedule, resource, day)));
   });
 
-  sched.getRange(startRow + RESOURCE_SCHEDULE_HEADER_ROW_COUNT, 1, resourceRows.length, 1)
+  resourceSched.getRange(startRow + RESOURCE_SCHEDULE_HEADER_ROW_COUNT, 1, resourceRows.length, 1)
     .setValues(resourceRows.map(row => [row[0]]))
     .setFontWeight('bold');
-  sched.getRange(startRow + RESOURCE_SCHEDULE_HEADER_ROW_COUNT, GANTT_FIRST_COLUMN, resourceRows.length, timeline.length)
+  resourceSched.getRange(startRow + RESOURCE_SCHEDULE_HEADER_ROW_COUNT, GANTT_FIRST_COLUMN, resourceRows.length, timeline.length)
     .setValues(resourceRows.map(row => row.slice(1)))
     .setHorizontalAlignment('center')
     .setBackgrounds(resourceRows.map(row => row.slice(1).map(value => value > 0 ? '#fff2cc' : null)));
@@ -3257,6 +3384,12 @@ function clearSchedule_(sched) {
   clearSheet_(sched);
   trimExtraRows_(sched, 50);
   trimExtraScheduleColumns_(sched, 26);
+}
+
+function clearResourceSchedule_(resourceSched) {
+  clearSheet_(resourceSched);
+  trimExtraRows_(resourceSched, 50);
+  trimExtraScheduleColumns_(resourceSched, 26);
 }
 
 
