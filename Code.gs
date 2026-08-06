@@ -64,6 +64,7 @@ const PERT_MIN_CONNECTED_NODE_ROW_DELTA = 3;
 const PERT_ADAPTIVE_ROW_NUDGE = 1;
 const PERT_MAX_ADAPTIVE_ROW_NUDGES_PER_NODE = 2;
 const PERT_LAYOUT_ORDERING_SWEEPS = 4;
+const PERT_LAYOUT_ROW_ALIGNMENT_SWEEPS = 3;
 const PERT_LAYOUT_SOURCE_ORDER_TIE_WEIGHT = 0.0001;
 const PERT_MAX_DIRECT_ARROW_RENDER_CELLS = 200000;
 const PERT_MAX_IMAGE_ARROW_COUNT = 200;
@@ -887,6 +888,7 @@ function buildPertLayout_(schedule) {
     });
   }
 
+  alignPertRowsToDependencyCentres_(schedule, positions);
   alignPertFinishMilestoneRow_(schedule, positions);
   expandPertRowsForArrowClearance_(schedule, positions);
   nudgePertRowsForFanClarity_(schedule, positions);
@@ -905,6 +907,94 @@ function buildPertLayout_(schedule) {
   };
 }
 
+
+function alignPertRowsToDependencyCentres_(schedule, positions) {
+  const maxLevel = schedule.reduce((maximumLevel, activity) => {
+    const position = positions.get(activity.id);
+    return position ? Math.max(maximumLevel, position.level) : maximumLevel;
+  }, 0);
+
+  for (let sweep = 0; sweep < PERT_LAYOUT_ROW_ALIGNMENT_SWEEPS; sweep++) {
+    for (let level = 1; level <= maxLevel; level++) {
+      alignPertLevelRowsToNeighborCentres_(schedule, positions, level, 'predecessors');
+    }
+
+    for (let level = maxLevel - 1; level >= 0; level--) {
+      alignPertLevelRowsToNeighborCentres_(schedule, positions, level, 'successors');
+    }
+  }
+}
+
+function alignPertLevelRowsToNeighborCentres_(schedule, positions, level, neighborKey) {
+  const levelActivities = schedule
+    .filter(activity => {
+      const position = positions.get(activity.id);
+      return position && position.level === level;
+    })
+    .map(activity => {
+      return {
+        activity,
+        position: positions.get(activity.id),
+        desiredRowOffset: getPertDesiredNeighborRowOffset_(activity, positions, neighborKey),
+      };
+    });
+
+  if (levelActivities.length < 2) return;
+
+  levelActivities.sort((a, b) => {
+    const desiredDelta = a.desiredRowOffset - b.desiredRowOffset;
+    if (desiredDelta !== 0) return desiredDelta;
+    const sourceDelta = (a.activity.sourceRow || 0) - (b.activity.sourceRow || 0);
+    if (sourceDelta !== 0) return sourceDelta;
+    return String(a.activity.id).localeCompare(String(b.activity.id));
+  });
+
+  const minimumRowGap = PERT_NODE_HEIGHT + 1;
+  let previousRowOffset = null;
+  levelActivities.forEach(item => {
+    const nextRowOffset = previousRowOffset === null
+      ? Math.max(0, Math.round(item.desiredRowOffset))
+      : Math.max(Math.round(item.desiredRowOffset), previousRowOffset + minimumRowGap);
+
+    item.position.rowOffset = nextRowOffset;
+    previousRowOffset = nextRowOffset;
+  });
+
+  compressPertAlignedLevelRows_(levelActivities, minimumRowGap);
+}
+
+function getPertDesiredNeighborRowOffset_(activity, positions, neighborKey) {
+  const neighborRows = (activity[neighborKey] || [])
+    .map(id => positions.get(id))
+    .filter(position => position)
+    .map(position => position.rowOffset)
+    .sort((a, b) => a - b);
+
+  if (neighborRows.length === 0) {
+    const currentPosition = positions.get(activity.id);
+    return currentPosition ? currentPosition.rowOffset : 0;
+  }
+
+  const medianIndex = Math.floor(neighborRows.length / 2);
+  const medianRow = neighborRows.length % 2
+    ? neighborRows[medianIndex]
+    : (neighborRows[medianIndex - 1] + neighborRows[medianIndex]) / 2;
+  const averageRow = neighborRows.reduce((sum, rowOffset) => sum + rowOffset, 0) / neighborRows.length;
+
+  return (medianRow + averageRow) / 2;
+}
+
+function compressPertAlignedLevelRows_(levelActivities, minimumRowGap) {
+  for (let index = levelActivities.length - 2; index >= 0; index--) {
+    const current = levelActivities[index];
+    const next = levelActivities[index + 1];
+    const highestAllowedRowOffset = next.position.rowOffset - minimumRowGap;
+    const desiredRowOffset = Math.max(0, Math.round(current.desiredRowOffset));
+    const compressedRowOffset = Math.max(desiredRowOffset, Math.min(current.position.rowOffset, highestAllowedRowOffset));
+
+    current.position.rowOffset = Math.max(0, compressedRowOffset);
+  }
+}
 
 function enforcePertNodeVerticalGaps_(positions) {
   const minimumRowGap = PERT_NODE_HEIGHT + 1;
