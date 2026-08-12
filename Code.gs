@@ -101,6 +101,29 @@ const PARALLEL_SCHEDULE_SPREADSHEET_ID_PROPERTY = 'parallelScheduleSpreadsheetId
 const PARALLEL_SCHEDULE_BATCH_TIME_LIMIT_MS = 4 * 60 * 1000;
 const PARALLEL_SCHEDULE_MAX_WBS_PER_RUN = 3;
 const PARALLEL_SCHEDULE_TRIGGER_DELAY_MS = 1000;
+const WEB_APP_VERIFICATION_STATUS = 'ok';
+const WEB_APP_VERIFICATION_MESSAGE = 'Code.gs web app endpoint is deployed and responding.';
+
+function doGet(e) {
+  return createWebAppVerificationResponse_(e);
+}
+
+function doPost(e) {
+  return createWebAppVerificationResponse_(e);
+}
+
+function createWebAppVerificationResponse_(e) {
+  const payload = {
+    status: WEB_APP_VERIFICATION_STATUS,
+    message: WEB_APP_VERIFICATION_MESSAGE,
+    deployedAt: new Date().toISOString(),
+    requestMethod: e && e.postData ? 'POST' : 'GET',
+  };
+
+  return ContentService
+    .createTextOutput(JSON.stringify(payload))
+    .setMimeType(ContentService.MimeType.JSON);
+}
 
 function generateSchedule() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
