@@ -76,7 +76,10 @@ const PERT_MAX_DIRECT_ARROW_RENDER_CELLS = 200000;
 const PERT_MAX_IMAGE_ARROW_COUNT = 200;
 const PERT_IMAGE_ARROW_MAX_NODE_COUNT = 250;
 const PERT_USE_IMAGE_ARROWS = true;
-const PERT_USE_COMPOSITE_DRAWN_ARROW_IMAGE = true;
+// A single SVG overlay is not consistently rendered by Google Sheets. Render
+// each connector as a PNG instead so every dependency has its own visible
+// arrow and a failed image cannot hide the rest of the network.
+const PERT_USE_COMPOSITE_DRAWN_ARROW_IMAGE = false;
 const PERT_ARROW_IMAGE_STROKE_WIDTH = 3;
 const PERT_ARROW_IMAGE_HEAD_LENGTH = 14;
 const PERT_ARROW_IMAGE_HEAD_HALF_WIDTH = 7;
@@ -1951,8 +1954,8 @@ function renderPertImageArrow_(pert, sourcePosition, targetPosition, successorIn
   const xOffset = Math.max(0, Math.round(minX - (anchorCol - 1) * PERT_CELL_WIDTH_PX));
   const yOffset = Math.max(0, Math.round(minY - (anchorRow - 1) * PERT_CELL_HEIGHT_PX));
   const blobFactories = [
-    () => createPertArrowRouteSvgBlob_(imageWidth, imageHeight, localizedRoutePoints, arrowColor),
     () => createPertArrowRoutePngBlob_(imageWidth, imageHeight, localizedRoutePoints, arrowColor),
+    () => createPertArrowRouteSvgBlob_(imageWidth, imageHeight, localizedRoutePoints, arrowColor),
   ];
 
   for (let index = 0; index < blobFactories.length; index++) {
@@ -1991,9 +1994,114 @@ function getPertPreferredPixelRoutePoints_(startPoint, endPoint, successorIndex,
     return getCleanestPertPixelRoute_(clearRoutes, positions, sourceId, targetId);
   }
 
-  // If every detour would still collide, keep a single uninterrupted direct path
-  // rather than drawing disconnected fragments.
+  // Route through the shortest available orthogonal corridor when the simple
+  // candidates are blocked. This keeps arrows out of node boxes without
+  // changing dependency levels or the left-to-right schedule flow.
+  const shortestClearRoute = getPertShortestObstacleAvoidingRoute_(startPoint, endPoint, positions, sourceId, targetId);
+  if (shortestClearRoute) return shortestClearRoute;
+
+  // This is only reached for a geometrically impossible layout. Preserve a
+  // continuous arrow rather than dropping a dependency altogether.
   return [startPoint, endPoint];
+}
+
+function getPertShortestObstacleAvoidingRoute_(startPoint, endPoint, positions, sourceId, targetId) {
+  if (!positions) return null;
+
+  const obstacleBoxes = [];
+  positions.forEach((position, id) => {
+    if (id === sourceId || id === targetId) return;
+    obstacleBoxes.push(expandPertPixelBox_(getPertNodePixelBox_(position), PERT_ARROW_BOX_CLEARANCE_PX));
+  });
+  if (obstacleBoxes.length === 0) return [startPoint, endPoint];
+
+  // A rectilinear visibility grid made from node-box edges contains a shortest
+  // Manhattan route around all rectangular node obstacles.
+  const xCoordinates = [startPoint.x, endPoint.x];
+  const yCoordinates = [startPoint.y, endPoint.y];
+  obstacleBoxes.forEach(box => {
+    xCoordinates.push(box.left - 1, box.right + 1);
+    yCoordinates.push(box.top - 1, box.bottom + 1);
+  });
+  const xs = getPertUniqueSortedCoordinates_(xCoordinates);
+  const ys = getPertUniqueSortedCoordinates_(yCoordinates);
+  const points = [];
+  const pointIndexByCoordinate = new Map();
+
+  ys.forEach(y => xs.forEach(x => {
+    const point = { x, y };
+    if (obstacleBoxes.some(box => isPertPointInsideBox_(point, box))) return;
+    const index = points.length;
+    points.push(point);
+    pointIndexByCoordinate.set(getPertPixelPointKey_(x, y), index);
+  }));
+
+  const startIndex = pointIndexByCoordinate.get(getPertPixelPointKey_(startPoint.x, startPoint.y));
+  const endIndex = pointIndexByCoordinate.get(getPertPixelPointKey_(endPoint.x, endPoint.y));
+  if (startIndex === undefined || endIndex === undefined) return null;
+
+  const adjacency = points.map(() => []);
+  points.forEach((point, index) => {
+    const xIndex = xs.indexOf(point.x);
+    const yIndex = ys.indexOf(point.y);
+    [[xIndex - 1, yIndex], [xIndex + 1, yIndex], [xIndex, yIndex - 1], [xIndex, yIndex + 1]].forEach(([nextXIndex, nextYIndex]) => {
+      if (nextXIndex < 0 || nextXIndex >= xs.length || nextYIndex < 0 || nextYIndex >= ys.length) return;
+      const nextIndex = pointIndexByCoordinate.get(getPertPixelPointKey_(xs[nextXIndex], ys[nextYIndex]));
+      if (nextIndex === undefined || !canUseDirectPertPixelRoute_(point, points[nextIndex], positions, sourceId, targetId)) return;
+      adjacency[index].push(nextIndex);
+    });
+  });
+
+  // Dijkstra state includes direction, preferring fewer bends only when the
+  // distance is otherwise equal. That makes the generated shortest path clean.
+  const distances = new Map();
+  const previous = new Map();
+  const pending = [{ index: startIndex, direction: '', distance: 0, bends: 0 }];
+  distances.set(`${startIndex}:`, { distance: 0, bends: 0 });
+
+  while (pending.length > 0) {
+    pending.sort((a, b) => a.distance - b.distance || a.bends - b.bends);
+    const current = pending.shift();
+    const currentKey = `${current.index}:${current.direction}`;
+    const known = distances.get(currentKey);
+    if (!known || known.distance !== current.distance || known.bends !== current.bends) continue;
+    if (current.index === endIndex) return reconstructPertShortestRoute_(points, previous, currentKey);
+
+    adjacency[current.index].forEach(nextIndex => {
+      const nextPoint = points[nextIndex];
+      const currentPoint = points[current.index];
+      const direction = nextPoint.x === currentPoint.x ? 'V' : 'H';
+      const nextDistance = current.distance + Math.abs(nextPoint.x - currentPoint.x) + Math.abs(nextPoint.y - currentPoint.y);
+      const nextBends = current.bends + (current.direction && current.direction !== direction ? 1 : 0);
+      const nextKey = `${nextIndex}:${direction}`;
+      const existing = distances.get(nextKey);
+      if (existing && (existing.distance < nextDistance || (existing.distance === nextDistance && existing.bends <= nextBends))) return;
+      distances.set(nextKey, { distance: nextDistance, bends: nextBends });
+      previous.set(nextKey, currentKey);
+      pending.push({ index: nextIndex, direction, distance: nextDistance, bends: nextBends });
+    });
+  }
+
+  return null;
+}
+
+function getPertUniqueSortedCoordinates_(coordinates) {
+  return Array.from(new Set(coordinates.map(value => Math.round(value * 100) / 100))).sort((a, b) => a - b);
+}
+
+function getPertPixelPointKey_(x, y) {
+  return `${Math.round(x * 100) / 100}:${Math.round(y * 100) / 100}`;
+}
+
+function reconstructPertShortestRoute_(points, previous, endKey) {
+  const route = [];
+  let key = endKey;
+  while (key) {
+    const separator = key.indexOf(':');
+    route.push(points[Number(key.slice(0, separator))]);
+    key = previous.get(key);
+  }
+  return compactPertPixelRoutePoints_(route.reverse());
 }
 
 function getCleanestPertPixelRoute_(routes, positions, sourceId, targetId) {
