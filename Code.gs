@@ -31,7 +31,9 @@ const PERT_ADAPTIVE_DENSE_LEVEL_STEP = 2;
 const PERT_DENSE_LEVEL_ACTIVITY_BUCKET_SIZE = 4;
 const PERT_DENSE_LEVEL_DEPENDENCY_BUCKET_SIZE = 3;
 const PERT_MIN_TERMINAL_ROW_SPACING = 8;
-const PERT_NODE_COLUMN_SPACING = 8;
+// Keep adjacent dependency levels close while retaining two grid columns for
+// arrow endpoints and short connector runs between the three-column nodes.
+const PERT_NODE_COLUMN_SPACING = 5;
 const PERT_NODE_HEIGHT = 3;
 const PERT_NODE_WIDTH = 3;
 const PERT_ARROW_COLOR = '#000000';
