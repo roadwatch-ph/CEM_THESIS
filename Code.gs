@@ -85,10 +85,10 @@ const PERT_ARROW_IMAGE_HEAD_LENGTH = 14;
 const PERT_ARROW_IMAGE_HEAD_HALF_WIDTH = 7;
 const PERT_ARROW_GRID_CONNECTOR_GLYPHS = new Set(['━', '┃', '┼']);
 const PERT_USE_BORDER_ARROW_CONNECTORS = false;
-// Keep a cell-rendered connector beneath every over-grid image.  Sheets can
-// accept an inserted image but fail to paint it in some clients; the grid
-// connector makes every dependency visible in that case.
-const PERT_USE_TEXT_GLYPH_ARROW_FALLBACK = true;
+// Dependency connectors must be rendered as over-grid arrow drawings, rather
+// than as characters or spreadsheet borders. This keeps the PERT network
+// visually consistent when it is exported or viewed at different zoom levels.
+const PERT_USE_TEXT_GLYPH_ARROW_FALLBACK = false;
 const PERT_ARROW_MARKER_SIZE = 18;
 const PERT_WEB_ARROW_STROKE_WIDTH = 1;
 const DEFAULT_WBS_SHEET_NAME = 'WBS';
@@ -784,7 +784,7 @@ function renderPertDiagram_(pert, schedule) {
   breakApartOverlappingMergedRanges_(pertDescriptionRange);
   pertDescriptionRange
     .mergeAcross()
-    .setValue('Each node shows ES, Duration, EF on top; Activity ID in the middle; and LS, Slack, LF on the bottom. Dependency arrows are drawn as over-grid images with a visible cell-based fallback for Google Sheets clients that do not paint generated images.')
+    .setValue('Each node shows ES, Duration, EF on top; Activity ID in the middle; and LS, Slack, LF on the bottom. Dependency arrows are rendered as over-grid drawings.')
     .setHorizontalAlignment('center')
     .setWrap(true)
     .setBackground('#ddebf7');
@@ -1640,9 +1640,9 @@ function renderPertArrows_(pert, schedule, layout, rowsNeeded, columnsNeeded) {
   const shouldUseImageArrows = shouldRenderPertImageArrows_(schedule, arrowRoutes);
   const compositeImageWasRendered = shouldUseImageArrows && renderPertCompositeArrowImage_(pert, arrowRoutes, layout.positions);
 
-  // Always render this safety layer, including when image insertion succeeds.
-  // Google Sheets may acknowledge insertImage() while failing to display the
-  // generated image, which previously left a PERT diagram with no arrows.
+  // Text glyph connectors are intentionally disabled by default: arrows in
+  // the generated diagram must be actual over-grid drawings. Keep the
+  // optional grid renderer for environments that explicitly opt into it.
   let fallbackArrowGrid = PERT_USE_TEXT_GLYPH_ARROW_FALLBACK
     ? createPertArrowGrid_(rowsNeeded, columnsNeeded)
     : null;
