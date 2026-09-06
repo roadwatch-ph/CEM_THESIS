@@ -2888,10 +2888,16 @@ function drawPertSmartArrow_(arrowGrid, sourcePosition, targetPosition, successo
     return;
   }
 
-  // Do not use a cell-by-cell diagonal as the reliable fallback. Each PERT
-  // cell is wide, so diagonal glyphs look like disconnected slashes (and the
-  // arrowhead can be visually lost). Orthogonal border runs are continuous
-  // and terminate in a dedicated, visible arrowhead cell.
+  // Match the preferred rendered-arrow behavior in the cell fallback: draw a
+  // direct route with horizontal and diagonal segments whenever that route is
+  // clear. This keeps simple dependencies visually direct instead of adding
+  // unnecessary right-angle bends. Use an orthogonal detour only when a node
+  // lies on the direct path.
+  if (canDrawPertContinuousRoute_(arrowGrid, startPoint, endPoint, occupiedNodeCells)) {
+    drawPertStraightOrDiagonalArrow_(arrowGrid, startPoint, endPoint);
+    return;
+  }
+
   drawPertOrthogonalSmartArrow_(arrowGrid, startPoint, endPoint, successorIndex, incomingIndex, occupiedNodeCells);
 }
 
