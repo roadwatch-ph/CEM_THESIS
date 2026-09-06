@@ -1643,17 +1643,18 @@ function renderPertArrows_(pert, schedule, layout, rowsNeeded, columnsNeeded) {
   const shouldUseImageArrows = shouldRenderPertImageArrows_(schedule, arrowRoutes);
   const compositeImageWasRendered = shouldUseImageArrows && renderPertCompositeArrowImage_(pert, arrowRoutes, layout.positions);
 
-  // Text glyph connectors are intentionally disabled by default: arrows in
-  // the generated diagram must be actual over-grid drawings. Keep the
-  // optional grid renderer for environments that explicitly opt into it.
-  let fallbackArrowGrid = PERT_USE_TEXT_GLYPH_ARROW_FALLBACK
+  // Drawings are preferred, but they are subject to Sheets image limits. Do
+  // not silently lose dependencies when a diagram is too large or an image
+  // insertion fails: render only those routes with the cell-based fallback.
+  let fallbackArrowGrid = PERT_USE_TEXT_GLYPH_ARROW_FALLBACK || !shouldUseImageArrows
     ? createPertArrowGrid_(rowsNeeded, columnsNeeded)
     : null;
   let occupiedNodeCells = fallbackArrowGrid ? createPertOccupiedNodeCellSet_(layout.positions) : null;
 
   arrowRoutes.forEach(route => {
-    if (!compositeImageWasRendered && shouldUseImageArrows) {
-      renderPertImageArrow_(
+    let imageWasRendered = compositeImageWasRendered;
+    if (!imageWasRendered && shouldUseImageArrows) {
+      imageWasRendered = renderPertImageArrow_(
         pert,
         route.sourcePosition,
         route.targetPosition,
@@ -1668,7 +1669,7 @@ function renderPertArrows_(pert, schedule, layout, rowsNeeded, columnsNeeded) {
       );
     }
 
-    if (PERT_USE_TEXT_GLYPH_ARROW_FALLBACK) {
+    if (!imageWasRendered) {
       if (!fallbackArrowGrid) {
         fallbackArrowGrid = createPertArrowGrid_(rowsNeeded, columnsNeeded);
         occupiedNodeCells = createPertOccupiedNodeCellSet_(layout.positions);
