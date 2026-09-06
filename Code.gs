@@ -85,7 +85,10 @@ const PERT_ARROW_IMAGE_HEAD_LENGTH = 14;
 const PERT_ARROW_IMAGE_HEAD_HALF_WIDTH = 7;
 const PERT_ARROW_GRID_CONNECTOR_GLYPHS = new Set(['━', '┃', '┼']);
 const PERT_USE_BORDER_ARROW_CONNECTORS = false;
-const PERT_USE_TEXT_GLYPH_ARROW_FALLBACK = false;
+// Keep a cell-rendered connector beneath every over-grid image.  Sheets can
+// accept an inserted image but fail to paint it in some clients; the grid
+// connector makes every dependency visible in that case.
+const PERT_USE_TEXT_GLYPH_ARROW_FALLBACK = true;
 const PERT_ARROW_MARKER_SIZE = 18;
 const PERT_WEB_ARROW_STROKE_WIDTH = 1;
 const DEFAULT_WBS_SHEET_NAME = 'WBS';
@@ -781,7 +784,7 @@ function renderPertDiagram_(pert, schedule) {
   breakApartOverlappingMergedRanges_(pertDescriptionRange);
   pertDescriptionRange
     .mergeAcross()
-    .setValue('Each node shows ES, Duration, EF on top; Activity ID in the middle; and LS, Slack, LF on the bottom. Arrows are rendered only as drawn over-grid SVG/PNG arrow images so connectors appear as actual arrows instead of spreadsheet borders or text glyphs.')
+    .setValue('Each node shows ES, Duration, EF on top; Activity ID in the middle; and LS, Slack, LF on the bottom. Dependency arrows are drawn as over-grid images with a visible cell-based fallback for Google Sheets clients that do not paint generated images.')
     .setHorizontalAlignment('center')
     .setWrap(true)
     .setBackground('#ddebf7');
@@ -1635,31 +1638,34 @@ function renderPertArrows_(pert, schedule, layout, rowsNeeded, columnsNeeded) {
   if (arrowRoutes.length === 0) return false;
 
   const shouldUseImageArrows = shouldRenderPertImageArrows_(schedule, arrowRoutes);
-  if (shouldUseImageArrows && renderPertCompositeArrowImage_(pert, arrowRoutes, layout.positions)) {
-    return false;
-  }
+  const compositeImageWasRendered = shouldUseImageArrows && renderPertCompositeArrowImage_(pert, arrowRoutes, layout.positions);
 
-  let fallbackArrowGrid = PERT_USE_TEXT_GLYPH_ARROW_FALLBACK && !shouldUseImageArrows
+  // Always render this safety layer, including when image insertion succeeds.
+  // Google Sheets may acknowledge insertImage() while failing to display the
+  // generated image, which previously left a PERT diagram with no arrows.
+  let fallbackArrowGrid = PERT_USE_TEXT_GLYPH_ARROW_FALLBACK
     ? createPertArrowGrid_(rowsNeeded, columnsNeeded)
     : null;
   let occupiedNodeCells = fallbackArrowGrid ? createPertOccupiedNodeCellSet_(layout.positions) : null;
 
   arrowRoutes.forEach(route => {
-    const wasRenderedAsImage = shouldUseImageArrows && renderPertImageArrow_(
-      pert,
-      route.sourcePosition,
-      route.targetPosition,
-      route.successorIndex,
-      route.successorCount,
-      route.incomingIndex,
-      route.incomingCount,
-      layout.positions,
-      route.sourceId,
-      route.targetId,
-      route.color
-    );
+    if (!compositeImageWasRendered && shouldUseImageArrows) {
+      renderPertImageArrow_(
+        pert,
+        route.sourcePosition,
+        route.targetPosition,
+        route.successorIndex,
+        route.successorCount,
+        route.incomingIndex,
+        route.incomingCount,
+        layout.positions,
+        route.sourceId,
+        route.targetId,
+        route.color
+      );
+    }
 
-    if (!wasRenderedAsImage && PERT_USE_TEXT_GLYPH_ARROW_FALLBACK) {
+    if (PERT_USE_TEXT_GLYPH_ARROW_FALLBACK) {
       if (!fallbackArrowGrid) {
         fallbackArrowGrid = createPertArrowGrid_(rowsNeeded, columnsNeeded);
         occupiedNodeCells = createPertOccupiedNodeCellSet_(layout.positions);
@@ -1732,22 +1738,40 @@ function shouldRenderPertImageArrows_(schedule, arrowRoutes) {
 
 function renderPertArrowGrid_(pert, arrowGrid, rowsNeeded, columnsNeeded) {
   const displayGrid = createPertArrowDisplayGrid_(arrowGrid);
+  const cellAddressesByGlyph = new Map();
 
-  if (rowsNeeded * columnsNeeded > PERT_MAX_DIRECT_ARROW_RENDER_CELLS) {
-    renderPertArrowGridInChunks_(pert, displayGrid, rowsNeeded, columnsNeeded);
-    stylePertArrowGridConnectors_(pert, arrowGrid);
-    return;
-  }
+  // Do not write a full rectangular range here: the title, description, and
+  // node labels contain merged cells. Writing only connector cells preserves
+  // those merged ranges while still providing a reliable arrow layer.
+  displayGrid.forEach((row, rowIndex) => {
+    row.forEach((glyph, columnIndex) => {
+      if (!glyph) return;
+      if (!cellAddressesByGlyph.has(glyph)) cellAddressesByGlyph.set(glyph, []);
+      cellAddressesByGlyph.get(glyph).push(getPertA1CellAddress_(rowIndex + 1, columnIndex + 1));
+    });
+  });
 
-  const arrowRange = pert.getRange(1, 1, rowsNeeded, columnsNeeded);
-  arrowRange
-    .setValues(displayGrid)
-    .setVerticalAlignment('middle')
-    .setHorizontalAlignment('center')
-    .setFontColor(PERT_ARROW_COLOR)
-    .setFontSize(PERT_ARROW_FONT_SIZE)
-    .setFontWeight('normal');
+  cellAddressesByGlyph.forEach((cellAddresses, glyph) => {
+    pert.getRangeList(cellAddresses)
+      .setValue(glyph)
+      .setVerticalAlignment('middle')
+      .setHorizontalAlignment('center')
+      .setFontColor(PERT_ARROW_COLOR)
+      .setFontSize(PERT_ARROW_FONT_SIZE)
+      .setFontWeight('normal');
+  });
   stylePertArrowGridConnectors_(pert, arrowGrid);
+}
+
+function getPertA1CellAddress_(row, column) {
+  let columnLabel = '';
+  let remainingColumn = column;
+  while (remainingColumn > 0) {
+    const remainder = (remainingColumn - 1) % 26;
+    columnLabel = String.fromCharCode(65 + remainder) + columnLabel;
+    remainingColumn = Math.floor((remainingColumn - 1) / 26);
+  }
+  return `${columnLabel}${row}`;
 }
 
 function createPertArrowDisplayGrid_(arrowGrid) {
