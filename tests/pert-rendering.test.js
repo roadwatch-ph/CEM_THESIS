@@ -51,8 +51,11 @@ assert.strictEqual(didRenderFallback, true, 'a failed image route should be rend
 const fallbackGrid = context.createPertArrowGrid_(20, 20);
 context.drawPertSmartArrow_(fallbackGrid, position(0, 0), position(1, 4), 0, 0, 1, new Set());
 const fallbackGlyphs = fallbackGrid.flat().filter(Boolean);
-assert.ok(fallbackGlyphs.includes('↘'), 'the fallback must retain a visible diagonal arrowhead');
-assert.ok(fallbackGlyphs.includes('╲'), 'a clear downward dependency should use a diagonal fallback segment');
+assert.ok(fallbackGlyphs.includes('▶'), 'the fallback must retain a visible arrowhead');
+assert.ok(fallbackGlyphs.includes('━'), 'a downward dependency should include a continuous horizontal connector');
+assert.ok(fallbackGlyphs.includes('┃'), 'a downward dependency should include a continuous vertical connector');
+assert.ok(!fallbackGlyphs.includes('╲'), 'the fallback must not use detached diagonal slash glyphs');
+assert.ok(!fallbackGlyphs.includes('╱'), 'the fallback must not use detached diagonal slash glyphs');
 
 const horizontalGrid = context.createPertArrowGrid_(20, 20);
 context.drawPertSmartArrow_(horizontalGrid, position(0, 0), position(1, 0), 0, 0, 1, new Set());

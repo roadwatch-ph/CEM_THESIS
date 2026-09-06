@@ -31,9 +31,9 @@ const PERT_ADAPTIVE_DENSE_LEVEL_STEP = 2;
 const PERT_DENSE_LEVEL_ACTIVITY_BUCKET_SIZE = 4;
 const PERT_DENSE_LEVEL_DEPENDENCY_BUCKET_SIZE = 3;
 const PERT_MIN_TERMINAL_ROW_SPACING = 8;
-// Keep adjacent dependency levels close while retaining two grid columns for
-// arrow endpoints and short connector runs between the three-column nodes.
-const PERT_NODE_COLUMN_SPACING = 5;
+// Keep adjacent dependency levels close while retaining enough clear grid
+// columns for a continuous border-based connector between three-column nodes.
+const PERT_NODE_COLUMN_SPACING = 6;
 const PERT_NODE_HEIGHT = 3;
 const PERT_NODE_WIDTH = 3;
 const PERT_ARROW_COLOR = '#000000';
@@ -49,9 +49,10 @@ const PERT_ARROW_SVG_IMAGE_FILE_NAME = 'pert-arrow.svg';
 const PERT_CELL_WIDTH_PX = 80;
 const PERT_CELL_HEIGHT_PX = 28;
 const PERT_ARROW_IMAGE_PADDING_PX = 14;
-// Arrows meet the node borders, matching conventional PERT diagrams: a thin
-// diagonal line leaves the middle of the predecessor and its arrowhead lands
-// on the middle of the successor.
+// Arrows meet the node borders, matching conventional PERT diagrams: one
+// continuous connector leaves the predecessor and its arrowhead lands on the
+// successor. When Sheets cannot display an over-grid image, the connector is
+// drawn with cell borders rather than separated diagonal text characters.
 const PERT_ARROW_IMAGE_NODE_GAP_PX = 0;
 const PERT_ARROW_IMAGE_TARGET_GAP_PX = 0;
 const PERT_ORTHOGONAL_ROUTE_ROW_CLEARANCE_PX = 18;
@@ -2888,16 +2889,9 @@ function drawPertSmartArrow_(arrowGrid, sourcePosition, targetPosition, successo
     return;
   }
 
-  // Match the preferred rendered-arrow behavior in the cell fallback: draw a
-  // direct route with horizontal and diagonal segments whenever that route is
-  // clear. This keeps simple dependencies visually direct instead of adding
-  // unnecessary right-angle bends. Use an orthogonal detour only when a node
-  // lies on the direct path.
-  if (canDrawPertContinuousRoute_(arrowGrid, startPoint, endPoint, occupiedNodeCells)) {
-    drawPertStraightOrDiagonalArrow_(arrowGrid, startPoint, endPoint);
-    return;
-  }
-
+  // A diagonal made from one glyph per spreadsheet cell looks like detached
+  // slashes at normal zoom. Use joined horizontal/vertical border segments so
+  // the fallback remains a single, continuous arrow on every Sheets client.
   drawPertOrthogonalSmartArrow_(arrowGrid, startPoint, endPoint, successorIndex, incomingIndex, occupiedNodeCells);
 }
 
@@ -2927,7 +2921,7 @@ function renderPertSmartArrow_(pert, sourcePosition, targetPosition, successorIn
     return;
   }
 
-  renderPertStraightOrDiagonalArrow_(pert, startPoint, endPoint);
+  renderPertOrthogonalSmartArrow_(pert, startPoint, endPoint, successorIndex, incomingIndex);
 }
 
 function getPertArrowStartPoint_(sourceRow, sourceCol) {
