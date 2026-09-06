@@ -87,10 +87,13 @@ const PERT_ARROW_IMAGE_STROKE_WIDTH = 1;
 const PERT_ARROW_IMAGE_HEAD_LENGTH = 8;
 const PERT_ARROW_IMAGE_HEAD_HALF_WIDTH = 4;
 const PERT_ARROW_GRID_CONNECTOR_GLYPHS = new Set(['━', '┃', '┼']);
-const PERT_USE_BORDER_ARROW_CONNECTORS = false;
-// Dependency connectors must be rendered as over-grid arrow drawings, rather
-// than as characters or spreadsheet borders. This keeps the PERT network
-// visually consistent when it is exported or viewed at different zoom levels.
+// When Sheets cannot insert an over-grid PNG, use cell borders for the line
+// segments. Unlike small box-drawing characters, borders span the entire cell
+// and therefore remain continuous at every zoom level. Arrowhead cells are
+// still rendered as glyphs by the fallback renderer below.
+const PERT_USE_BORDER_ARROW_CONNECTORS = true;
+// Prefer over-grid drawings; this flag only exists for environments where a
+// text-glyph fallback is explicitly required instead of the border fallback.
 const PERT_USE_TEXT_GLYPH_ARROW_FALLBACK = false;
 const PERT_ARROW_MARKER_SIZE = 18;
 const PERT_WEB_ARROW_STROKE_WIDTH = 1;
@@ -2885,11 +2888,10 @@ function drawPertSmartArrow_(arrowGrid, sourcePosition, targetPosition, successo
     return;
   }
 
-  if (canDrawPertContinuousRoute_(arrowGrid, startPoint, endPoint, occupiedNodeCells)) {
-    drawPertStraightOrDiagonalArrow_(arrowGrid, startPoint, endPoint);
-    return;
-  }
-
+  // Do not use a cell-by-cell diagonal as the reliable fallback. Each PERT
+  // cell is wide, so diagonal glyphs look like disconnected slashes (and the
+  // arrowhead can be visually lost). Orthogonal border runs are continuous
+  // and terminate in a dedicated, visible arrowhead cell.
   drawPertOrthogonalSmartArrow_(arrowGrid, startPoint, endPoint, successorIndex, incomingIndex, occupiedNodeCells);
 }
 
