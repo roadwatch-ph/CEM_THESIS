@@ -49,8 +49,11 @@ const PERT_ARROW_SVG_IMAGE_FILE_NAME = 'pert-arrow.svg';
 const PERT_CELL_WIDTH_PX = 80;
 const PERT_CELL_HEIGHT_PX = 28;
 const PERT_ARROW_IMAGE_PADDING_PX = 14;
-const PERT_ARROW_IMAGE_NODE_GAP_PX = 6;
-const PERT_ARROW_IMAGE_TARGET_GAP_PX = 10;
+// Arrows meet the node borders, matching conventional PERT diagrams: a thin
+// diagonal line leaves the middle of the predecessor and its arrowhead lands
+// on the middle of the successor.
+const PERT_ARROW_IMAGE_NODE_GAP_PX = 0;
+const PERT_ARROW_IMAGE_TARGET_GAP_PX = 0;
 const PERT_ORTHOGONAL_ROUTE_ROW_CLEARANCE_PX = 18;
 const PERT_ORTHOGONAL_ROUTE_ROW_STEP_PX = PERT_CELL_HEIGHT_PX;
 const PERT_MAX_ORTHOGONAL_ROUTE_ROW_ATTEMPTS = 12;
@@ -80,9 +83,9 @@ const PERT_USE_IMAGE_ARROWS = true;
 // each connector as a PNG instead so every dependency has its own visible
 // arrow and a failed image cannot hide the rest of the network.
 const PERT_USE_COMPOSITE_DRAWN_ARROW_IMAGE = false;
-const PERT_ARROW_IMAGE_STROKE_WIDTH = 3;
-const PERT_ARROW_IMAGE_HEAD_LENGTH = 14;
-const PERT_ARROW_IMAGE_HEAD_HALF_WIDTH = 7;
+const PERT_ARROW_IMAGE_STROKE_WIDTH = 1;
+const PERT_ARROW_IMAGE_HEAD_LENGTH = 8;
+const PERT_ARROW_IMAGE_HEAD_HALF_WIDTH = 4;
 const PERT_ARROW_GRID_CONNECTOR_GLYPHS = new Set(['━', '┃', '┼']);
 const PERT_USE_BORDER_ARROW_CONNECTORS = false;
 // Dependency connectors must be rendered as over-grid arrow drawings, rather
