@@ -48,4 +48,10 @@ assert.strictEqual(
 );
 assert.strictEqual(didRenderFallback, true, 'a failed image route should be rendered by the fallback');
 
+const fallbackGrid = context.createPertArrowGrid_(20, 20);
+context.drawPertSmartArrow_(fallbackGrid, position(0, 0), position(1, 4), 0, 0, 1, new Set());
+const fallbackGlyphs = fallbackGrid.flat().filter(Boolean);
+assert.ok(fallbackGlyphs.includes('▶'), 'the fallback must retain a visible arrowhead');
+assert.ok(!fallbackGlyphs.includes('╲') && !fallbackGlyphs.includes('╱'), 'the fallback must not use visually disconnected diagonal glyphs');
+
 console.log('PERT rendering fallback tests passed');
