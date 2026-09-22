@@ -85,8 +85,11 @@ const PERT_USE_IMAGE_ARROWS = true;
 // arrow and a failed image cannot hide the rest of the network.
 const PERT_USE_COMPOSITE_DRAWN_ARROW_IMAGE = false;
 const PERT_ARROW_IMAGE_STROKE_WIDTH = 1;
-const PERT_ARROW_IMAGE_HEAD_LENGTH = 8;
-const PERT_ARROW_IMAGE_HEAD_HALF_WIDTH = 4;
+// Use a long, narrow filled head so a diagonal dependency reads as a clean
+// drafting-style arrow (a thin shaft terminating in a small triangle), rather
+// than as a wide chevron.
+const PERT_ARROW_IMAGE_HEAD_LENGTH = 12;
+const PERT_ARROW_IMAGE_HEAD_HALF_WIDTH = 3;
 const PERT_ARROW_GRID_CONNECTOR_GLYPHS = new Set(['━', '┃', '┼']);
 // When Sheets cannot insert an over-grid PNG, use cell borders for the line
 // segments. Unlike small box-drawing characters, borders span the entire cell
@@ -1644,15 +1647,10 @@ function renderPertArrows_(pert, schedule, layout, rowsNeeded, columnsNeeded) {
   const shouldUseImageArrows = shouldRenderPertImageArrows_(schedule, arrowRoutes);
   const compositeImageWasRendered = shouldUseImageArrows && renderPertCompositeArrowImage_(pert, arrowRoutes, layout.positions);
 
-  // An inserted image can succeed in Apps Script but still not be painted by
-  // a Sheets client. Always render the cell connector layer as well, so every
-  // dependency remains visible even when over-grid drawings are unavailable.
-  // Images, when available, enhance the routing without being the sole copy
-  // of an arrow.
-  const fallbackArrowGrid = createPertArrowGrid_(rowsNeeded, columnsNeeded);
-  const occupiedNodeCells = createPertOccupiedNodeCellSet_(layout.positions);
-
   arrowRoutes.forEach(route => {
+    // Prefer a transparent over-grid PNG/SVG for every route. This is a real
+    // drawing that can run diagonally across the sheet; do not also trace it
+    // through spreadsheet cells, which would turn it into a boxy connector.
     if (!compositeImageWasRendered && shouldUseImageArrows) {
       renderPertImageArrow_(
         pert,
@@ -1669,11 +1667,12 @@ function renderPertArrows_(pert, schedule, layout, rowsNeeded, columnsNeeded) {
       );
     }
 
-    drawPertSmartArrow_(fallbackArrowGrid, route.sourcePosition, route.targetPosition, route.successorIndex, route.incomingIndex, route.incomingCount, occupiedNodeCells);
+    // Intentionally do not fall back to cell borders or text glyphs here.
+    // Those connectors follow the spreadsheet grid instead of the actual
+    // dependency path and cannot produce the requested drawn-arrow result.
   });
 
-  renderPertArrowGrid_(pert, fallbackArrowGrid, rowsNeeded, columnsNeeded);
-  return true;
+  return false;
 }
 
 function buildPertArrowRoutes_(schedule, layout) {
@@ -1724,9 +1723,9 @@ function getPertArrowColor_(sourceActivity, targetActivity) {
 }
 
 function shouldRenderPertImageArrows_(schedule, arrowRoutes) {
-  return PERT_USE_IMAGE_ARROWS &&
-    schedule.length <= PERT_IMAGE_ARROW_MAX_NODE_COUNT &&
-    arrowRoutes.length <= PERT_MAX_IMAGE_ARROW_COUNT;
+  // Connectors are always rendered as over-grid images. Unlike cell borders,
+  // images preserve true diagonal lines and a directional arrowhead.
+  return PERT_USE_IMAGE_ARROWS;
 }
 
 

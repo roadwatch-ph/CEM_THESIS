@@ -30,8 +30,8 @@ const routes = [{
 
 assert.strictEqual(
   context.shouldRenderPertImageArrows_(Array.from({ length: 251 }), routes),
-  false,
-  'large diagrams should select the fallback instead of attempting over-grid images'
+  true,
+  'large diagrams should retain drawn arrows instead of selecting a cell-based fallback'
 );
 
 let didRenderFallback = false;
@@ -43,10 +43,10 @@ context.renderPertArrowGrid_ = () => { didRenderFallback = true; };
 
 assert.strictEqual(
   context.renderPertArrows_({}, [], layout, 12, 12),
-  true,
-  'a failed image route should request node repainting after the grid fallback'
+  false,
+  'a failed image route should not revert to a cell-based connector'
 );
-assert.strictEqual(didRenderFallback, true, 'a failed image route should be rendered by the fallback');
+assert.strictEqual(didRenderFallback, false, 'a failed image route must not be rendered through spreadsheet cells');
 
 didRenderFallback = false;
 context.renderPertCompositeArrowImage_ = () => false;
@@ -55,14 +55,28 @@ context.renderPertArrowGrid_ = () => { didRenderFallback = true; };
 
 assert.strictEqual(
   context.renderPertArrows_({}, [], layout, 12, 12),
-  true,
-  'a successfully inserted image should still request node repainting for the durable connector layer'
+  false,
+  'a successfully inserted image should not request node repainting through cell connectors'
 );
 assert.strictEqual(
   didRenderFallback,
-  true,
-  'a successfully inserted image must retain a visible cell connector backup'
+  false,
+  'a successfully inserted image must remain a drawing instead of adding a cell connector backup'
 );
+
+didRenderFallback = false;
+context.renderPertCompositeArrowImage_ = () => true;
+context.renderPertImageArrow_ = () => {
+  throw new Error('a composite image should render every route without per-route images');
+};
+context.renderPertArrowGrid_ = () => { didRenderFallback = true; };
+
+assert.strictEqual(
+  context.renderPertArrows_({}, [], layout, 12, 12),
+  false,
+  'a successfully inserted composite image should not request a cell fallback'
+);
+assert.strictEqual(didRenderFallback, false, 'a composite drawing must not add cell-based connector lines');
 
 const fallbackGrid = context.createPertArrowGrid_(20, 20);
 context.drawPertSmartArrow_(fallbackGrid, position(0, 0), position(1, 4), 0, 0, 1, new Set());
@@ -99,5 +113,18 @@ const diagonalSvg = context.createPertArrowRouteSvg_(160, 160, diagonalRoute, '#
 assert.ok(diagonalSvg.includes('<polyline'), 'the arrow renderer should draw a continuous line');
 assert.ok(diagonalSvg.includes('<polygon'), 'the arrow renderer should draw an arrowhead at the line end');
 assert.ok(diagonalSvg.includes('#123456'), 'the arrow drawing should retain the route color');
+
+const referenceArrowSvg = context.createPertArrowRouteSvg_(160, 80, [
+  { x: 10, y: 60 },
+  { x: 150, y: 20 },
+], '#000000');
+const headMatch = referenceArrowSvg.match(/<polygon points="([^"]+)"/);
+assert.ok(headMatch, 'a straight arrow should end in a filled triangular head');
+const headPoints = headMatch[1].split(' ').map(point => point.split(',').map(Number));
+const [tip, baseA, baseB] = headPoints;
+const headLength = Math.hypot(tip[0] - (baseA[0] + baseB[0]) / 2, tip[1] - (baseA[1] + baseB[1]) / 2);
+const headWidth = Math.hypot(baseA[0] - baseB[0], baseA[1] - baseB[1]);
+assert.ok(headLength > headWidth, 'the reference-style arrowhead should be narrow rather than a wide chevron');
+assert.ok(headLength >= 11.9 && headLength <= 12.1, 'the arrowhead should retain its 12px drafting-style length');
 
 console.log('PERT rendering fallback tests passed');
