@@ -93,9 +93,6 @@ const PERT_ARROW_GRID_CONNECTOR_GLYPHS = new Set(['━', '┃', '┼']);
 // and therefore remain continuous at every zoom level. Arrowhead cells are
 // still rendered as glyphs by the fallback renderer below.
 const PERT_USE_BORDER_ARROW_CONNECTORS = true;
-// Prefer over-grid drawings; this flag only exists for environments where a
-// text-glyph fallback is explicitly required instead of the border fallback.
-const PERT_USE_TEXT_GLYPH_ARROW_FALLBACK = false;
 const PERT_ARROW_MARKER_SIZE = 18;
 const PERT_WEB_ARROW_STROKE_WIDTH = 1;
 const DEFAULT_WBS_SHEET_NAME = 'WBS';
@@ -791,7 +788,7 @@ function renderPertDiagram_(pert, schedule) {
   breakApartOverlappingMergedRanges_(pertDescriptionRange);
   pertDescriptionRange
     .mergeAcross()
-    .setValue('Each node shows ES, Duration, EF on top; Activity ID in the middle; and LS, Slack, LF on the bottom. Dependency arrows are rendered as over-grid drawings.')
+    .setValue('Each node shows ES, Duration, EF on top; Activity ID in the middle; and LS, Slack, LF on the bottom. Dependency arrows are rendered as visible connectors between nodes.')
     .setHorizontalAlignment('center')
     .setWrap(true)
     .setBackground('#ddebf7');
@@ -1647,18 +1644,17 @@ function renderPertArrows_(pert, schedule, layout, rowsNeeded, columnsNeeded) {
   const shouldUseImageArrows = shouldRenderPertImageArrows_(schedule, arrowRoutes);
   const compositeImageWasRendered = shouldUseImageArrows && renderPertCompositeArrowImage_(pert, arrowRoutes, layout.positions);
 
-  // Drawings are preferred, but they are subject to Sheets image limits. Do
-  // not silently lose dependencies when a diagram is too large or an image
-  // insertion fails: render only those routes with the cell-based fallback.
-  let fallbackArrowGrid = PERT_USE_TEXT_GLYPH_ARROW_FALLBACK || !shouldUseImageArrows
-    ? createPertArrowGrid_(rowsNeeded, columnsNeeded)
-    : null;
-  let occupiedNodeCells = fallbackArrowGrid ? createPertOccupiedNodeCellSet_(layout.positions) : null;
+  // An inserted image can succeed in Apps Script but still not be painted by
+  // a Sheets client. Always render the cell connector layer as well, so every
+  // dependency remains visible even when over-grid drawings are unavailable.
+  // Images, when available, enhance the routing without being the sole copy
+  // of an arrow.
+  const fallbackArrowGrid = createPertArrowGrid_(rowsNeeded, columnsNeeded);
+  const occupiedNodeCells = createPertOccupiedNodeCellSet_(layout.positions);
 
   arrowRoutes.forEach(route => {
-    let imageWasRendered = compositeImageWasRendered;
-    if (!imageWasRendered && shouldUseImageArrows) {
-      imageWasRendered = renderPertImageArrow_(
+    if (!compositeImageWasRendered && shouldUseImageArrows) {
+      renderPertImageArrow_(
         pert,
         route.sourcePosition,
         route.targetPosition,
@@ -1673,21 +1669,11 @@ function renderPertArrows_(pert, schedule, layout, rowsNeeded, columnsNeeded) {
       );
     }
 
-    if (!imageWasRendered) {
-      if (!fallbackArrowGrid) {
-        fallbackArrowGrid = createPertArrowGrid_(rowsNeeded, columnsNeeded);
-        occupiedNodeCells = createPertOccupiedNodeCellSet_(layout.positions);
-      }
-      drawPertSmartArrow_(fallbackArrowGrid, route.sourcePosition, route.targetPosition, route.successorIndex, route.incomingIndex, route.incomingCount, occupiedNodeCells);
-    }
+    drawPertSmartArrow_(fallbackArrowGrid, route.sourcePosition, route.targetPosition, route.successorIndex, route.incomingIndex, route.incomingCount, occupiedNodeCells);
   });
 
-  if (fallbackArrowGrid) {
-    renderPertArrowGrid_(pert, fallbackArrowGrid, rowsNeeded, columnsNeeded);
-    return true;
-  }
-
-  return false;
+  renderPertArrowGrid_(pert, fallbackArrowGrid, rowsNeeded, columnsNeeded);
+  return true;
 }
 
 function buildPertArrowRoutes_(schedule, layout) {

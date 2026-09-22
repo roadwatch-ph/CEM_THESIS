@@ -48,6 +48,22 @@ assert.strictEqual(
 );
 assert.strictEqual(didRenderFallback, true, 'a failed image route should be rendered by the fallback');
 
+didRenderFallback = false;
+context.renderPertCompositeArrowImage_ = () => false;
+context.renderPertImageArrow_ = () => true;
+context.renderPertArrowGrid_ = () => { didRenderFallback = true; };
+
+assert.strictEqual(
+  context.renderPertArrows_({}, [], layout, 12, 12),
+  true,
+  'a successfully inserted image should still request node repainting for the durable connector layer'
+);
+assert.strictEqual(
+  didRenderFallback,
+  true,
+  'a successfully inserted image must retain a visible cell connector backup'
+);
+
 const fallbackGrid = context.createPertArrowGrid_(20, 20);
 context.drawPertSmartArrow_(fallbackGrid, position(0, 0), position(1, 4), 0, 0, 1, new Set());
 const fallbackGlyphs = fallbackGrid.flat().filter(Boolean);
