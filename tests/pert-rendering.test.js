@@ -79,4 +79,25 @@ const horizontalGlyphs = horizontalGrid.flat().filter(Boolean);
 assert.ok(horizontalGlyphs.includes('━'), 'a same-row dependency should use a horizontal fallback segment');
 assert.ok(horizontalGlyphs.includes('▶'), 'a horizontal fallback must retain a visible arrowhead');
 
+const verticalSource = position(2, 0);
+const verticalTarget = position(2, 8);
+const verticalPoints = context.getPertArrowPixelConnectionPoints_(verticalSource, verticalTarget, 0, 1, 0, 1);
+assert.strictEqual(verticalPoints.start.x, verticalPoints.end.x, 'vertically aligned nodes should connect through top/bottom ports');
+assert.ok(verticalPoints.start.y < verticalPoints.end.y, 'a downward dependency should point down');
+
+const verticalRoute = context.getPertPreferredPixelRoutePoints_(verticalPoints.start, verticalPoints.end, 0, 0);
+assert.strictEqual(verticalRoute.length, 2, 'a clear vertical dependency should be drawn as one straight line');
+assert.strictEqual(verticalRoute[0].x, verticalRoute[1].x, 'the vertical line must not acquire a horizontal bend');
+
+const diagonalPoints = context.getPertArrowPixelConnectionPoints_(position(0, 0), position(1, 5), 0, 1, 0, 1);
+const diagonalRoute = context.getPertPreferredPixelRoutePoints_(diagonalPoints.start, diagonalPoints.end, 0, 0);
+assert.strictEqual(diagonalRoute.length, 2, 'a clear diagonal dependency should be drawn as one straight line');
+assert.notStrictEqual(diagonalRoute[0].x, diagonalRoute[1].x, 'a diagonal dependency needs horizontal movement');
+assert.notStrictEqual(diagonalRoute[0].y, diagonalRoute[1].y, 'a diagonal dependency needs vertical movement');
+
+const diagonalSvg = context.createPertArrowRouteSvg_(160, 160, diagonalRoute, '#123456');
+assert.ok(diagonalSvg.includes('<polyline'), 'the arrow renderer should draw a continuous line');
+assert.ok(diagonalSvg.includes('<polygon'), 'the arrow renderer should draw an arrowhead at the line end');
+assert.ok(diagonalSvg.includes('#123456'), 'the arrow drawing should retain the route color');
+
 console.log('PERT rendering fallback tests passed');

@@ -2670,10 +2670,28 @@ function getPertArrowPixelConnectionPoints_(sourcePosition, targetPosition, succ
   const targetRouteIndex = incomingIndex || 0;
   const targetRouteCount = Math.max(1, incomingCount || 1);
 
-  // Keep PERT dependencies flowing left-to-right like the requested reference,
-  // but distribute ports along node edges so fan-in/fan-out arrows do not pile
-  // up on the exact same center point.
-  return targetCenter.x >= sourceCenter.x
+  const horizontalDistance = targetCenter.x - sourceCenter.x;
+  const verticalDistance = targetCenter.y - sourceCenter.y;
+
+  // Use the edge facing the destination. The old implementation always used
+  // left/right ports, which made a dependency between vertically aligned
+  // nodes double back through the node boxes. Choosing top/bottom ports for a
+  // vertical route gives the image renderer a real vertical arrow; side ports
+  // retain the usual horizontal and diagonal PERT arrows. Ports are still
+  // distributed to keep fan-in and fan-out from stacking on one pixel.
+  if (Math.abs(horizontalDistance) < 1 && Math.abs(verticalDistance) >= 1) {
+    return verticalDistance > 0
+      ? {
+        start: getPertPixelPointOnHorizontalEdge_(sourceBox, 'bottom', sourceRouteIndex, sourceRouteCount),
+        end: getPertPixelPointOnHorizontalEdge_(targetBox, 'top', targetRouteIndex, targetRouteCount),
+      }
+      : {
+        start: getPertPixelPointOnHorizontalEdge_(sourceBox, 'top', sourceRouteIndex, sourceRouteCount),
+        end: getPertPixelPointOnHorizontalEdge_(targetBox, 'bottom', targetRouteIndex, targetRouteCount),
+      };
+  }
+
+  return horizontalDistance >= 0
     ? {
       start: getPertPixelPointOnVerticalEdge_(sourceBox, 'right', sourceRouteIndex, sourceRouteCount),
       end: getPertPixelPointOnVerticalEdge_(targetBox, 'left', targetRouteIndex, targetRouteCount),
